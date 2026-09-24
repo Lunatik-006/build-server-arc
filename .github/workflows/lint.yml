@@ -45,6 +45,16 @@ jobs:
       - name: shellcheck
         run: shellcheck --severity=warning $(git ls-files -- '*.sh')
 
+      - name: Scripts are executable
+        # The README tells you to run these directly; a 100644 mode turns that
+        # into "Permission denied" on a fresh clone.
+        run: |
+          bad=$(git ls-files -s -- 'scripts/*.sh' | awk '$1 != "100755" {print $4}')
+          if [ -n "$bad" ]; then
+            printf 'not executable in git:\n%s\n' "$bad"
+            exit 1
+          fi
+
   overlay:
     # deploy-scale-set.sh writes a YAML overlay by string interpolation into a
     # heredoc. Render it and assert the properties that took bld1 down on
