@@ -72,7 +72,14 @@ REGISTRY_MIRRORS="${REGISTRY_MIRRORS:-}"
 # this chart, and ARC does not support them drifting apart.
 CHART_VERSION="${CHART_VERSION:-0.14.2}"
 
-NS="arc-$(echo "$ORG" | tr '[:upper:]' '[:lower:]')"
+# Namespace defaults to the lowercased org, but the two are not the same fact:
+# `githubConfigUrl` must carry the org exactly as GitHub spells it, while the
+# namespace is whatever the pool was first created under. bld1 runs the Miraj-OS
+# pool in `arc-miraj`, not the `arc-miraj-os` this default would derive — deploy
+# it without the override and you get a second, parallel scale-set long-polling
+# the same org for the same `runs-on` label instead of an upgrade of the first.
+NAMESPACE="${NAMESPACE:-}"
+NS="${NAMESPACE:-arc-$(echo "$ORG" | tr '[:upper:]' '[:lower:]')}"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 PRIV_KEY=$(cat "$PRIVATE_KEY_FILE")
