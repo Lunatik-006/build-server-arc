@@ -39,6 +39,30 @@ scripts/deploy-scale-set.sh
 
 The GitHub App webhook URL is **not used** — ARC pulls from GitHub's runner broker via long-polling with the App credentials.
 
+### The two scale-sets on `bld1`
+
+Written down because the sizing is not the defaults, and re-running the script without
+these would quietly shrink the pools and drop miraj's local registry mirror. `PRIVATE_KEY_FILE`
+is the **jakwuh-build-server** App PEM; App id `3743839` for both.
+
+```bash
+# izi-x org — the product CI pool
+APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAME=izi-x-linux MAX=20 \
+  CPU_REQUEST=500m MEM_REQUEST=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=1Gi \
+  IMAGE=ghcr.io/jakwuh/actions-runner:<sha> \
+  PRIVATE_KEY_FILE=<app>.pem scripts/deploy-scale-set.sh
+
+# Miraj-OS org — `runs-on: self-hosted`; also pulls through the in-cluster registry cache
+APP_ID=3743839 INSTALL_ID=133143010 ORG=Miraj-OS NAME=self-hosted MAX=8 \
+  MEM_REQUEST=2Gi DIND_MEM_REQUEST=1Gi \
+  REGISTRY_MIRRORS=http://10.43.104.17:5000 \
+  IMAGE=ghcr.io/jakwuh/actions-runner:<sha> \
+  PRIVATE_KEY_FILE=<app>.pem scripts/deploy-scale-set.sh
+```
+
+Pin `IMAGE` to a commit sha, never `:latest` — a scale-set is only rolled when its pod
+template changes, so a moving tag means the pool keeps running whatever it pulled first.
+
 ## Runner image contract
 
 The reference image (`runner-image/`) and any custom image you want to use must satisfy ARC's DinD container mode:
@@ -116,5 +140,6 @@ helm upgrade <release> -n <namespace> --reuse-values --set maxRunners=50 \
 
 ## Tuning
 
-- **Per-host capacity**: limit via `maxRunners` per scale-set + pod template resource requests.
+- **Per-host capacity**: `maxRunners` per scale-set + pod template resource *requests* decide how many pods the scheduler admits. They do not decide how much a pod may then take — that is the *limits*, and a pool without memory limits will eventually take the node down instead of failing one job. `MEM_LIMIT` / `DIND_MEM_LIMIT` in `scripts/deploy-scale-set.sh` are not optional tuning.
+- **Never put the job tree in tmpfs.** `emptyDir: { medium: Memory }` is RAM the scheduler cannot account for — it is charged to nobody's request, and `sizeLimit` is per volume, so `maxRunners: 20` with a 16 GiB `work` volume promises 320 GiB on the box. It ends in swap thrash, not in an eviction. `work` and `dind-externals` are node disk; only the 32 KB `dind-sock` stays in memory.
 - **Burst latency**: first pull of a runner image is slow (~1-2 min for multi-GB images). Subsequent spawns hit local cache and start in ~30s.

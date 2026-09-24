@@ -5,6 +5,10 @@
 #   APP_ID=… PRIVATE_KEY_FILE=path INSTALL_ID=… ORG=… NAME=… [IMAGE=…] [MAX=…] \
 #     scripts/deploy-scale-set.sh
 #
+# Optional sizing/knobs, defaults below: CPU_REQUEST, MEM_REQUEST, CPU_LIMIT,
+# MEM_LIMIT, DIND_CPU_REQUEST, DIND_MEM_REQUEST, DIND_MEM_LIMIT,
+# REGISTRY_MIRRORS ("host1 host2", highest priority first).
+#
 # Prerequisites (once per namespace):
 #   kubectl -n arc-<org> create secret docker-registry ghcr-pull \
 #     --docker-server=ghcr.io \
@@ -20,23 +24,43 @@ set -euo pipefail
 : "${INSTALL_ID:?GITHUB_APP_INSTALLATION_ID required}"
 : "${ORG:?ORG required (GitHub org or user)}"
 : "${NAME:?NAME required — scale-set name, must match runs-on: label in workflows}"
+# No apostrophe in a :? message — inside ${VAR:?word} it opens a single quote
+# that never closes, and the whole script dies at parse time.
 : "${PRIVATE_KEY_FILE:?PRIVATE_KEY_FILE required — path to the GitHub App PEM file}"
 IMAGE="${IMAGE:-ghcr.io/jakwuh/actions-runner:latest}"
 MAX="${MAX:-8}"
 MIN="${MIN:-1}"
-# Per-container CPU/memory requests (no limits → burstable). These bound the
-# scheduler so it never overpacks the node — without them a container is
-# "weightless" → CPU contention → dind's managed containerd misses its 15s
-# startup window → dind exits 1, runner hangs Running (1/2 Error forever),
-# build times climb. The dind container is the one that runs dockerd + that
-# managed containerd (and every `docker build`), so it MUST carry its OWN
-# request — a requested runner sitting next to a weightless dind still lets the
-# scheduler overpack dind and starve containerd at startup. Sized from p90 of
-# live builds (runner 1.6 cores / 0.9Gi).
+# Per-container CPU/memory requests. These bound the scheduler so it never
+# overpacks the node — without them a container is "weightless" → CPU contention
+# → dind's managed containerd misses its 15s startup window → dind exits 1,
+# runner hangs Running (1/2 Error forever), build times climb. The dind container
+# is the one that runs dockerd + that managed containerd (and every
+# `docker build`), so it MUST carry its OWN request — a requested runner sitting
+# next to a weightless dind still lets the scheduler overpack dind and starve
+# containerd at startup. Sized from p90 of live builds (runner 1.6 cores / 0.9Gi).
 CPU_REQUEST="${CPU_REQUEST:-1}"
 MEM_REQUEST="${MEM_REQUEST:-1.5Gi}"
 DIND_CPU_REQUEST="${DIND_CPU_REQUEST:-1}"
 DIND_MEM_REQUEST="${DIND_MEM_REQUEST:-1.5Gi}"
+# Memory limits are mandatory, not tuning. A request only tells the scheduler how
+# many pods fit; it does not stop one of them from eating the box. On 2026-09-24
+# bld1 (24 vCPU / 62 GiB) ran 20 runners whose real footprint was 2.3–7.8 GiB per
+# pod against a 1.75 GiB request: 58 GiB used, swap thrashing at 50 MB/s, load
+# 351. k3s lost to the builds — kine answered in 18–83 s, the apiserver returned
+# `Handler timeout`, kubelet reported `PLEG is not healthy`, and the node flapped
+# NotReady long enough for the taint manager to evict the ARC listeners and for
+# the kernel OOM killer to take arc-gha-rs-controller (exit 137). With no
+# listener GitHub has nowhere to place jobs, and CI queues silently — the exact
+# outage arc-watchdog was written for, except the watchdog cannot cure it.
+# With a limit the offending container is OOM-killed alone and one job goes red.
+MEM_LIMIT="${MEM_LIMIT:-6Gi}"
+DIND_MEM_LIMIT="${DIND_MEM_LIMIT:-4Gi}"
+# CPU limit per runner container. Burst room for compile-heavy steps without
+# letting a single job monopolise the node.
+CPU_LIMIT="${CPU_LIMIT:-4}"
+# Extra dockerd registry mirrors, highest priority first (space-separated). The
+# built-in https://mirror.gcr.io is always appended last.
+REGISTRY_MIRRORS="${REGISTRY_MIRRORS:-}"
 
 NS="arc-$(echo "$ORG" | tr '[:upper:]' '[:lower:]')"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -55,6 +79,12 @@ kubectl -n "$NS" create secret generic github-app \
 # name/image/command/etc. and producing an invalid AutoscalingRunnerSet).
 OVERLAY=$(mktemp /tmp/arc-overlay-XXXXXX.yaml)
 trap "rm -f $OVERLAY" EXIT
+
+MIRROR_ARGS=""
+for mirror in $REGISTRY_MIRRORS https://mirror.gcr.io; do
+  MIRROR_ARGS+="
+      - --registry-mirror=$mirror"
+done
 
 cat > "$OVERLAY" << YAML
 minRunners: $MIN
@@ -84,6 +114,9 @@ template:
         requests:
           cpu: "$CPU_REQUEST"
           memory: $MEM_REQUEST
+        limits:
+          cpu: "$CPU_LIMIT"
+          memory: $MEM_LIMIT
       volumeMounts:
       - { mountPath: /home/runner/_work, name: work }
       - { mountPath: /var/run, name: dind-sock }
@@ -93,22 +126,30 @@ template:
       args:
       - dockerd
       - --host=unix:///var/run/docker.sock
-      - --group=123
-      - --registry-mirror=https://mirror.gcr.io
+      - --group=123$MIRROR_ARGS
       securityContext:
         privileged: true
       resources:
         requests:
           cpu: "$DIND_CPU_REQUEST"
           memory: $DIND_MEM_REQUEST
+        limits:
+          memory: $DIND_MEM_LIMIT
       volumeMounts:
       - { mountPath: /home/runner/_work, name: work }
       - { mountPath: /var/run, name: dind-sock }
       - { mountPath: /home/runner/externals, name: dind-externals }
     volumes:
-    - { name: work,           emptyDir: { medium: Memory, sizeLimit: 16Gi  } }
+    # work and dind-externals are node disk, not tmpfs. medium: Memory makes the
+    # volume RAM the scheduler cannot see — emptyDir does not enter a pod's
+    # memory request, and sizeLimit is per volume, so maxRunners: 20 promised
+    # 320 GiB of tmpfs on a 62 GiB box. bld1 held 33.8 GiB of RAM in 72 such
+    # volumes on 2026-09-24 while its disk sat 31% used; tmpfs pages can only
+    # leave RAM through swap, which is what put the node into thrash and took
+    # k3s down with it. The job tree belongs on the disk that has 134 GiB free.
+    - { name: work,           emptyDir: { sizeLimit: 16Gi  } }
     - { name: dind-sock,      emptyDir: { medium: Memory, sizeLimit: 256Mi } }
-    - { name: dind-externals, emptyDir: { medium: Memory, sizeLimit: 1Gi   } }
+    - { name: dind-externals, emptyDir: { sizeLimit: 1Gi   } }
 YAML
 
 helm upgrade --install "$NAME" \
