@@ -20,7 +20,7 @@ set -euo pipefail
 : "${INSTALL_ID:?GITHUB_APP_INSTALLATION_ID required}"
 : "${ORG:?ORG required (GitHub org or user)}"
 : "${NAME:?NAME required — scale-set name, must match runs-on: label in workflows}"
-: "${PRIVATE_KEY_FILE:?PRIVATE_KEY_FILE required — path to App's PEM file}"
+: "${PRIVATE_KEY_FILE:?PRIVATE_KEY_FILE required — path to the GitHub App PEM file}"
 IMAGE="${IMAGE:-ghcr.io/jakwuh/actions-runner:latest}"
 MAX="${MAX:-8}"
 MIN="${MIN:-1}"
