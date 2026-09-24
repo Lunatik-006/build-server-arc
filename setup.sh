@@ -98,10 +98,16 @@ echo "=== actions-runner-controller (ARC) ==="
 # recreated, so the pools stay dead. Measured usage is 16m CPU / 43Mi.
 # The NoExecute tolerations are unbounded on purpose: this is a single-node
 # cluster, so evicting the controller can only mean "nowhere", never "elsewhere".
+# Pinned, and the same version scripts/deploy-scale-set.sh pins: the listener
+# image comes from the controller chart and the runner spec from the scale-set
+# chart, and ARC does not support the two drifting apart. Unpinned, rebuilding
+# the box would silently install whatever ARC has released since.
+ARC_VERSION="${ARC_VERSION:-0.14.2}"
 helm upgrade --install arc \
   --namespace arc-systems --create-namespace \
   --set-json 'resources={"requests":{"cpu":"100m","memory":"128Mi"},"limits":{"memory":"512Mi"}}' \
   --set-json 'tolerations=[{"key":"node.kubernetes.io/not-ready","operator":"Exists","effect":"NoExecute"},{"key":"node.kubernetes.io/unreachable","operator":"Exists","effect":"NoExecute"}]' \
+  --version "$ARC_VERSION" \
   oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller
 
 echo "=== Wait for controller ==="

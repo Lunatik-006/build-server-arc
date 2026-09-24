@@ -84,7 +84,7 @@ serving nothing:
 | Tailnet membership + the `tag:buildsrv` tag | `tailscale up --authkey` with an auth key from 1Password; the tag is what the tailnet policy grants on |
 | Tailnet grants to reach the clusters | the tailnet ACL (`tag:buildsrv` → `tag:k8s-operator`, impersonating a group that RBAC binds inside the target cluster) |
 | `github-app` secret in each `arc-*` namespace | GitHub App **jakwuh-build-server** (app id, installation id, private key) — the same App the runner healthcheck mints tokens from |
-| `ghcr-pull` secret in each `arc-*` namespace | a ghcr read token, for the custom runner image |
+| `ghcr-pull` secret in each `arc-*` namespace, and the matching `ghcr.io` entry in root's `~/.docker/config.json` | a ghcr read token, for the custom runner image. **It expires, and both copies go dead together.** A dead token does not degrade gracefully: ghcr answers the token endpoint with `403 denied` instead of falling through to the anonymous access a public chart would get, so `helm upgrade … oci://ghcr.io/actions/…` fails for every scale-set even though that chart needs no credentials at all. Found that way on 2026-09-24 with a token issued 2026-05-18. Check with `curl -so /dev/null -w '%{http_code}\n' -H "Authorization: Basic $(jq -r '.auths["ghcr.io"].auth' ~/.docker/config.json)" 'https://ghcr.io/token?scope=repository%3Aactions%2Factions-runner-controller-charts%2Fgha-runner-scale-set%3Apull&service=ghcr.io'` — 200 is healthy, 403 means rotate it in both places |
 | `/etc/arc-watchdog/{tg-token,config}` | alerts bot token + chat id; without them the watchdog heals silently |
 | Anything izi-x-specific | lives in `izi-x/izi-x-infra`, not here — e.g. `ops/pr-stand-janitor` |
 

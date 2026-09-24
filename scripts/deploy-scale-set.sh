@@ -66,6 +66,11 @@ DIND_CPU_LIMIT="${DIND_CPU_LIMIT:-4}"
 # Extra dockerd registry mirrors, highest priority first (space-separated). The
 # built-in https://mirror.gcr.io is always appended last.
 REGISTRY_MIRRORS="${REGISTRY_MIRRORS:-}"
+# Pinned: unpinned, a redeploy of an unchanged scale-set silently moves the pool
+# to whatever ARC released since. Must match the controller version setup.sh
+# installs — the listener image comes from the controller, the runner spec from
+# this chart, and ARC does not support them drifting apart.
+CHART_VERSION="${CHART_VERSION:-0.14.2}"
 
 NS="arc-$(echo "$ORG" | tr '[:upper:]' '[:lower:]')"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
@@ -183,6 +188,7 @@ helm upgrade --install "$NAME" \
   --set githubConfigSecret=github-app \
   --set "runnerScaleSetName=$NAME" \
   -f "$OVERLAY" \
+  --version "$CHART_VERSION" \
   oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set
 
 kubectl -n "$NS" get autoscalingrunnerset
