@@ -72,7 +72,8 @@ jobs:
           python3 - <<'PY'
           import sys, yaml
 
-          spec = yaml.safe_load(open("overlay.yaml"))["template"]["spec"]
+          overlay = yaml.safe_load(open("overlay.yaml"))
+          spec = overlay["template"]["spec"]
           fail = []
 
           # A memory-backed emptyDir is RAM no request accounts for, and
@@ -85,15 +86,30 @@ jobs:
               if vol.get("emptyDir", {}).get("medium") == "Memory":
                   fail.append(f"volume {vol['name']}: emptyDir medium=Memory")
 
-          # Without a memory limit an overrunning job takes the node, and with
-          # it the k3s control plane, instead of taking only itself.
+          # Uncapped, an overrunning job takes the node — and with it the k3s
+          # control plane — instead of taking only itself. Both containers need
+          # both caps: the runner was capped at 4 CPU on 2026-09-24 while the
+          # uncapped dind beside it took 14.8 of the node's 24 cores.
           for c in spec["containers"]:
-              if not c.get("resources", {}).get("limits", {}).get("memory"):
-                  fail.append(f"container {c['name']}: no memory limit")
-              if not c.get("resources", {}).get("requests", {}).get("memory"):
-                  fail.append(f"container {c['name']}: no memory request")
-              if not c.get("resources", {}).get("requests", {}).get("cpu"):
-                  fail.append(f"container {c['name']}: no cpu request")
+              res = c.get("resources", {})
+              for kind in ("requests", "limits"):
+                  for what in ("cpu", "memory"):
+                      if not res.get(kind, {}).get(what):
+                          fail.append(f"container {c['name']}: no {what} {kind[:-1]}")
+
+          # The listener is the only thing that can take a job from GitHub and
+          # there is nowhere else to run it: a node blip must not evict it, and
+          # BestEffort QoS must not offer it to the OOM killer first.
+          listener = overlay["listenerTemplate"]["spec"]
+          tolerated = {t["key"] for t in listener.get("tolerations", [])
+                       if t.get("effect") == "NoExecute"
+                       and t.get("tolerationSeconds") is None}
+          for key in ("node.kubernetes.io/not-ready", "node.kubernetes.io/unreachable"):
+              if key not in tolerated:
+                  fail.append(f"listener: no unbounded NoExecute toleration for {key}")
+          lc = next(c for c in listener["containers"] if c["name"] == "listener")
+          if not lc.get("resources", {}).get("requests", {}).get("memory"):
+              fail.append("listener: no memory request (BestEffort)")
 
           # REGISTRY_MIRRORS must reach dockerd ahead of the built-in mirror,
           # or a deploy silently drops the in-cluster pull-through cache.

@@ -110,6 +110,17 @@ in the first case, restarting the controller in the second — and announces wha
 Telegram if `/etc/arc-watchdog/tg-token` (chmod 600) and `TG_CHAT=` in `/etc/arc-watchdog/config`
 are present. Without those it heals silently.
 
+**The restart is not a reliable cure.** On 2026-09-24 both pools had no listener from 15:31 to
+16:13 UTC and seven restarts, one every six minutes, changed nothing; what brought them back was
+a helm upgrade that altered the runner pod template and so forced a fresh EphemeralRunnerSet and
+listener. A repeating alert therefore means the repair is *not* working — treat it as a page, not
+as a resolution. Before each heal the watchdog now dumps the controller and listener logs, the
+CRs, the pods and the events to `/var/lib/arc-watchdog/incident-<ts>-<ns>_<name>/` (last 20 kept),
+because `rollout restart` destroys the controller pod and its log, which is why the 2026-09-24
+wedge can no longer be explained. It also no longer counts a strike when the API is unreadable:
+a starved apiserver is not an absent listener, and restarting the controller against one only
+adds a full re-LIST to the queue it is already drowning in.
+
 ```bash
 systemctl list-timers arc-watchdog.timer arc-runner-janitor.timer
 journalctl -u arc-watchdog.service --since -1h
@@ -140,6 +151,7 @@ helm upgrade <release> -n <namespace> --reuse-values --set maxRunners=50 \
 
 ## Tuning
 
-- **Per-host capacity**: `maxRunners` per scale-set + pod template resource *requests* decide how many pods the scheduler admits. They do not decide how much a pod may then take — that is the *limits*, and a pool without memory limits will eventually take the node down instead of failing one job. `MEM_LIMIT` / `DIND_MEM_LIMIT` in `scripts/deploy-scale-set.sh` are not optional tuning.
+- **Per-host capacity**: `maxRunners` per scale-set + pod template resource *requests* decide how many pods the scheduler admits. They do not decide how much a pod may then take — that is the *limits*, and a pool without them will eventually take the node down instead of failing one job. `MEM_LIMIT` / `DIND_MEM_LIMIT` / `CPU_LIMIT` / `DIND_CPU_LIMIT` in `scripts/deploy-scale-set.sh` are not optional tuning. Cap `dind` as hard as the runner: buildkit fans out to every core it can see, and on 2026-09-24 a single pod was taking 14.8 of 24 cores through its uncapped dind while the runner container beside it sat under its own 4-core cap.
+- **The control plane does not compete.** `setup.sh` reserves CPU and memory for k3s and the system through `/etc/rancher/k3s/config.yaml`. Without it the apiserver and kine lose to the builds, the node flaps NotReady, and the ARC listeners get evicted — the pool dies with jobs queuing and nothing red anywhere.
 - **Never put the job tree in tmpfs.** `emptyDir: { medium: Memory }` is RAM the scheduler cannot account for — it is charged to nobody's request, and `sizeLimit` is per volume, so `maxRunners: 20` with a 16 GiB `work` volume promises 320 GiB on the box. It ends in swap thrash, not in an eviction. `work` and `dind-externals` are node disk; only the 32 KB `dind-sock` stays in memory.
 - **Burst latency**: first pull of a runner image is slow (~1-2 min for multi-GB images). Subsequent spawns hit local cache and start in ~30s.

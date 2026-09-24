@@ -6,8 +6,8 @@
 #     scripts/deploy-scale-set.sh
 #
 # Optional sizing/knobs, defaults below: CPU_REQUEST, MEM_REQUEST, CPU_LIMIT,
-# MEM_LIMIT, DIND_CPU_REQUEST, DIND_MEM_REQUEST, DIND_MEM_LIMIT,
-# REGISTRY_MIRRORS ("host1 host2", highest priority first).
+# MEM_LIMIT, DIND_CPU_REQUEST, DIND_MEM_REQUEST, DIND_CPU_LIMIT,
+# DIND_MEM_LIMIT, REGISTRY_MIRRORS ("host1 host2", highest priority first).
 #
 # Prerequisites (once per namespace):
 #   kubectl -n arc-<org> create secret docker-registry ghcr-pull \
@@ -55,9 +55,14 @@ DIND_MEM_REQUEST="${DIND_MEM_REQUEST:-1.5Gi}"
 # With a limit the offending container is OOM-killed alone and one job goes red.
 MEM_LIMIT="${MEM_LIMIT:-6Gi}"
 DIND_MEM_LIMIT="${DIND_MEM_LIMIT:-4Gi}"
-# CPU limit per runner container. Burst room for compile-heavy steps without
-# letting a single job monopolise the node.
+# CPU limits, for the same reason as the memory ones. dind is where `docker
+# build` actually runs, and buildkit fans out to every core it can see: measured
+# on bld1 on 2026-09-24, one pod was taking 14.8 of 24 cores while its runner
+# container sat under its own 4-core cap — the whole 14.8 was in the uncapped
+# dind. A pod ceiling of CPU_LIMIT + DIND_CPU_LIMIT keeps one job from
+# monopolising the box while leaving burst room for compile-heavy steps.
 CPU_LIMIT="${CPU_LIMIT:-4}"
+DIND_CPU_LIMIT="${DIND_CPU_LIMIT:-4}"
 # Extra dockerd registry mirrors, highest priority first (space-separated). The
 # built-in https://mirror.gcr.io is always appended last.
 REGISTRY_MIRRORS="${REGISTRY_MIRRORS:-}"
@@ -89,6 +94,25 @@ done
 cat > "$OVERLAY" << YAML
 minRunners: $MIN
 maxRunners: $MAX
+listenerTemplate:
+  spec:
+    # The listener is the only thing that can accept a job from GitHub, and on a
+    # single-node cluster there is nowhere to reschedule it — the default 300s
+    # NoExecute tolerations only guarantee that a node blip takes the pool
+    # offline. bld1 on 2026-09-24: the node flapped NotReady under CI load, the
+    # taint manager evicted both listener pods, and the pool then sat without a
+    # listener for 42 minutes while jobs queued with no red check anywhere.
+    tolerations:
+    - { key: node.kubernetes.io/not-ready,   operator: Exists, effect: NoExecute }
+    - { key: node.kubernetes.io/unreachable, operator: Exists, effect: NoExecute }
+    containers:
+    # Requests, so the listener is not BestEffort: that QoS class is what the
+    # kernel OOM killer reaches for first, and it is exactly the pod whose death
+    # is invisible. Measured usage is 3m CPU / 10Mi.
+    - name: listener
+      resources:
+        requests: { cpu: 50m, memory: 64Mi }
+        limits: { memory: 256Mi }
 template:
   spec:
     imagePullSecrets:
@@ -134,6 +158,7 @@ template:
           cpu: "$DIND_CPU_REQUEST"
           memory: $DIND_MEM_REQUEST
         limits:
+          cpu: "$DIND_CPU_LIMIT"
           memory: $DIND_MEM_LIMIT
       volumeMounts:
       - { mountPath: /home/runner/_work, name: work }
