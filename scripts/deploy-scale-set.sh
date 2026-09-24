@@ -78,7 +78,7 @@ kubectl -n "$NS" create secret generic github-app \
 # elements (--set containers[0].x replaces the entire element, losing
 # name/image/command/etc. and producing an invalid AutoscalingRunnerSet).
 OVERLAY=$(mktemp /tmp/arc-overlay-XXXXXX.yaml)
-trap "rm -f $OVERLAY" EXIT
+trap 'rm -f "$OVERLAY"' EXIT
 
 MIRROR_ARGS=""
 for mirror in $REGISTRY_MIRRORS https://mirror.gcr.io; do
