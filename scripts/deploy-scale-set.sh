@@ -5,7 +5,8 @@
 #   APP_ID=… PRIVATE_KEY_FILE=path INSTALL_ID=… ORG=… NAME=… [IMAGE=…] [MAX=…] \
 #     scripts/deploy-scale-set.sh
 #
-# Optional sizing/knobs, defaults below: CPU_REQUEST, MEM_REQUEST, CPU_LIMIT,
+# Optional, and mandatory when the pool's namespace or Helm release name is not
+# the derived default: NAMESPACE, RELEASE. Plus sizing: CPU_REQUEST,
 # MEM_LIMIT, DIND_CPU_REQUEST, DIND_MEM_REQUEST, DIND_CPU_LIMIT,
 # DIND_MEM_LIMIT, REGISTRY_MIRRORS ("host1 host2", highest priority first).
 #
@@ -80,6 +81,12 @@ CHART_VERSION="${CHART_VERSION:-0.14.2}"
 # the same org for the same `runs-on` label instead of an upgrade of the first.
 NAMESPACE="${NAMESPACE:-}"
 NS="${NAMESPACE:-arc-$(echo "$ORG" | tr '[:upper:]' '[:lower:]')}"
+# Same story for the Helm release name: it defaults to the scale-set name, but
+# the two are independent and on bld1 they differ — the Miraj-OS pool is the
+# release `miraj-self-hosted` serving `runs-on: self-hosted`. Get it wrong and
+# helm refuses outright ("cannot be imported into the current release"), which
+# is the pleasant failure; the namespace one above fails silently.
+RELEASE="${RELEASE:-$NAME}"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
 PRIV_KEY=$(cat "$PRIVATE_KEY_FILE")
@@ -189,7 +196,7 @@ template:
     - { name: dind-externals, emptyDir: { sizeLimit: 1Gi   } }
 YAML
 
-helm upgrade --install "$NAME" \
+helm upgrade --install "$RELEASE" \
   --namespace "$NS" \
   --set githubConfigUrl="https://github.com/$ORG" \
   --set githubConfigSecret=github-app \

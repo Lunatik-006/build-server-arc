@@ -56,7 +56,8 @@ APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAME=izi-x-linux MAX=20 \
 # NAMESPACE is mandatory here: the pool lives in arc-miraj, while the default
 # derived from the org would be arc-miraj-os. Deploy without it and you get a
 # second scale-set sharing the same GitHub registration instead of an upgrade.
-APP_ID=3743839 INSTALL_ID=133143010 ORG=Miraj-OS NAMESPACE=arc-miraj NAME=self-hosted MAX=8 \
+APP_ID=3743839 INSTALL_ID=133143010 ORG=Miraj-OS NAME=self-hosted MAX=8 \
+  NAMESPACE=arc-miraj RELEASE=miraj-self-hosted \
   MEM_REQUEST=2Gi DIND_MEM_REQUEST=1Gi \
   REGISTRY_MIRRORS=http://10.43.104.17:5000 \
   IMAGE=ghcr.io/jakwuh/actions-runner:<sha> \
