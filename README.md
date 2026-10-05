@@ -47,8 +47,8 @@ is the **jakwuh-build-server** App PEM; App id `3743839` for both.
 
 ```bash
 # izi-x org — the product CI pool
-APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAME=izi-x-linux MAX=15 \
-  CPU_REQUEST=500m MEM_REQUEST=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=1Gi \
+APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAME=izi-x-linux MAX=20 \
+  CPU_REQUEST=500m MEM_REQUEST=1Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=512Mi \
   IMAGE=ghcr.io/jakwuh/actions-runner:<sha> \
   PRIVATE_KEY_FILE=<app>.pem scripts/deploy-scale-set.sh
 
@@ -80,8 +80,12 @@ do not redeploy GitHub credentials just to change sizing.
 #   RUNNER_LIGHT  → izi-x-linux-light   (gates, notifications, stand deploy; no docker)
 #   RUNNER_NODIND → izi-x-linux-nodind  (validate/lint/test, flutter checks; no docker)
 #   RUNNER_MAIN / RUNNER_RELEASE → izi-x-linux-main / izi-x-linux-release (priority)
-# izi-x-linux MAX=15 (was 20): ~17 dind pods fill node memory requests; 15 leaves
-# room for the small pools instead of queueing them behind PR builds.
+# izi-x-linux requests are sized from 48h of per-container usage (2026-10-03..05):
+# dind p99 0.21Gi (PR builds go to the shared buildkitd), runner p90 1.07Gi; the
+# hungriest jobs (validate-*, flutter checks, up to 5.5Gi) run on izi-x-linux-nodind.
+# Node usage peaked at 22.8 of 62GiB while 3Gi requests had it "full" at ~17 pods.
+# Changing the pod template drains the pool (no new jobs until running ones finish):
+# do it off-peak.
 # First: kubectl apply -f manifests/runner-priority-classes.yaml
 COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=ghcr.io/jakwuh/actions-runner:<sha> PRIVATE_KEY_FILE=<app>.pem"
 env $COMMON NAME=izi-x-linux-light DIND=false PRIORITY_CLASS=ci-light MIN=1 MAX=8 \
