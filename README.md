@@ -47,7 +47,7 @@ is the **jakwuh-build-server** App PEM; App id `3743839` for both.
 
 ```bash
 # izi-x org — the product CI pool
-APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAME=izi-x-linux MAX=20 \
+APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAME=izi-x-linux MAX=15 \
   CPU_REQUEST=500m MEM_REQUEST=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=1Gi \
   IMAGE=ghcr.io/jakwuh/actions-runner:<sha> \
   PRIVATE_KEY_FILE=<app>.pem scripts/deploy-scale-set.sh
@@ -73,6 +73,33 @@ Rollback sizing: `MIN=1 CPU_REQUEST=1 DIND_CPU_REQUEST=1`, retaining every
 other value. For an existing release, save `helm get values` and upgrade the
 same pinned chart with a full values file that changes only these three fields;
 do not redeploy GitHub credentials just to change sizing.
+
+```bash
+# izi-x routes jobs between these pools with repo variables; set a variable only
+# after its pool is up — a job for a label nobody serves queues for 24h.
+#   RUNNER_LIGHT  → izi-x-linux-light   (gates, notifications, stand deploy; no docker)
+#   RUNNER_NODIND → izi-x-linux-nodind  (validate/lint/test, flutter checks; no docker)
+#   RUNNER_MAIN / RUNNER_RELEASE → izi-x-linux-main / izi-x-linux-release (priority)
+# izi-x-linux MAX=15 (was 20): ~17 dind pods fill node memory requests; 15 leaves
+# room for the small pools instead of queueing them behind PR builds.
+# First: kubectl apply -f manifests/runner-priority-classes.yaml
+COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=ghcr.io/jakwuh/actions-runner:<sha> PRIVATE_KEY_FILE=<app>.pem"
+env $COMMON NAME=izi-x-linux-light DIND=false PRIORITY_CLASS=ci-light MIN=1 MAX=8 \
+  CPU_REQUEST=100m MEM_REQUEST=384Mi CPU_LIMIT=1 MEM_LIMIT=1Gi scripts/deploy-scale-set.sh
+env $COMMON NAME=izi-x-linux-nodind DIND=false MIN=1 MAX=12 \
+  CPU_REQUEST=500m MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi scripts/deploy-scale-set.sh
+env $COMMON NAME=izi-x-linux-release PRIORITY_CLASS=ci-release MIN=0 MAX=8 \
+  CPU_REQUEST=500m MEM_REQUEST=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=1Gi scripts/deploy-scale-set.sh
+env $COMMON NAME=izi-x-linux-main PRIORITY_CLASS=ci-main MIN=0 MAX=6 \
+  CPU_REQUEST=500m MEM_REQUEST=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=1Gi scripts/deploy-scale-set.sh
+```
+
+Rolling a pool back — order matters, or required PR gates and release jobs queue
+forever for a label nobody serves: delete the izi-x repo variable, wait until no
+queued job asks for that label, `helm uninstall <release> -n arc-izi-x` (keep
+`github-app` and `ghcr-pull` — shared), and only then delete PriorityClasses nobody uses.
+Priority pools also change the neighbours: Miraj-OS pods (priority 0) queue behind
+izi-x release/main pods on a full node and are evicted earlier under memory pressure.
 
 Pin `IMAGE` to a commit sha, never `:latest` — a scale-set is only rolled when its pod
 template changes, so a moving tag means the pool keeps running whatever it pulled first.
