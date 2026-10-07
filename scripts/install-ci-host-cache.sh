@@ -45,7 +45,9 @@ if [ ! -x "$FLUTTER_DIR/flutter/bin/flutter" ]; then
 fi
 
 chown -R "$RUNNER_UID:$RUNNER_UID" "$TOOLCACHE"
-# Pull the engine artifacts once, as the user the jobs run as.
+# Pull the engine artifacts once, as the user the jobs run as. flutter inspects the
+# working directory for a project, so run it from one the runner user can read.
+cd /tmp
 setpriv --reuid="$RUNNER_UID" --regid="$RUNNER_UID" --clear-groups \
   env HOME=/tmp PUB_CACHE=/opt/ci-cache/pub "$FLUTTER_DIR/flutter/bin/flutter" precache
 setpriv --reuid="$RUNNER_UID" --regid="$RUNNER_UID" --clear-groups \
