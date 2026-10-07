@@ -3,7 +3,7 @@
 #   1. k3s (lightweight Kubernetes, single-node)
 #   2. firewall (the box is meant to be reachable over the tailnet only)
 #   3. Helm + the ARC controller in namespace `arc-systems`
-#   4. the janitors/watchdogs that keep the pool alive
+#   4. the janitors/watchdogs that keep the pool alive, and the node-local CI caches
 #   5. the in-cluster helpers (pull-through registry cache, buildkitd)
 #
 # After this finishes, run scripts/deploy-scale-set.sh for each scale-set you
@@ -130,8 +130,19 @@ done
 # build box fills its disk in weeks without this.
 curl -fsSL "$RAW/systemd/arc-prune.service" -o /etc/systemd/system/arc-prune.service
 curl -fsSL "$RAW/systemd/arc-prune.timer" -o /etc/systemd/system/arc-prune.timer
+# ci-cache-prune: the shared dependency caches below grow with every new package
+# version; files nobody read for 14 days go.
+curl -fsSL "$RAW/systemd/ci-cache-prune.service" -o /etc/systemd/system/ci-cache-prune.service
+curl -fsSL "$RAW/systemd/ci-cache-prune.timer" -o /etc/systemd/system/ci-cache-prune.timer
 systemctl daemon-reload
-systemctl enable --now arc-watchdog.timer arc-runner-janitor.timer arc-prune.timer
+systemctl enable --now arc-watchdog.timer arc-runner-janitor.timer arc-prune.timer ci-cache-prune.timer
+
+echo "=== CI host cache ==="
+# Tool cache and dependency caches the pools mount with CI_HOST_CACHE=true; a pool
+# deployed with it before this runs fails to start its pods (hostPath type Directory).
+curl -fsSL "$RAW/scripts/install-ci-host-cache.sh" -o /opt/build-server/install-ci-host-cache.sh
+chmod +x /opt/build-server/install-ci-host-cache.sh
+/opt/build-server/install-ci-host-cache.sh
 
 echo "=== In-cluster helpers ==="
 # Pull-through registry cache (docker.io/ghcr rate limits + cold-pull latency)

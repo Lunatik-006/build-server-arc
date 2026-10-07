@@ -9,6 +9,7 @@
 # the derived default: NAMESPACE, RELEASE. Plus sizing: CPU_REQUEST,
 # MEM_LIMIT, DIND_CPU_REQUEST, DIND_MEM_REQUEST, DIND_CPU_LIMIT,
 # DIND_MEM_LIMIT, REGISTRY_MIRRORS ("host1 host2", highest priority first).
+# Pod shape: PRIORITY_CLASS, DIND, DIND_EXTERNALS, CI_HOST_CACHE, WORK_SIZE.
 #
 # Prerequisites (once per namespace):
 #   kubectl -n arc-<org> create secret docker-registry ghcr-pull \
@@ -96,9 +97,19 @@ PRIORITY_CLASS="${PRIORITY_CLASS:-}"
 # requests and pays the externals init copy on start; on 2026-10-01 and 10-05 such
 # jobs sat Pending on "Insufficient memory" next to real builds.
 DIND="${DIND:-true}"
+# DIND_EXTERNALS=false — no init copy of the runner externals into the dind
+# sidecar. They exist only for `container:` jobs and docker-based actions; a pool
+# whose org uses neither (izi-x: none of its 22 actions is docker-based) pays
+# ~0.6 GB of writes per pod start for nothing.
+DIND_EXTERNALS="${DIND_EXTERNALS:-true}"
+# CI_HOST_CACHE=true — mount the node-local tool cache and dependency caches
+# (scripts/install-ci-host-cache.sh) into the runner container.
+CI_HOST_CACHE="${CI_HOST_CACHE:-false}"
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-case "$DIND" in true|false) ;; *) echo "DIND must be true or false, got: $DIND" >&2; exit 1 ;; esac
+for flag in DIND DIND_EXTERNALS CI_HOST_CACHE; do
+  case "${!flag}" in true|false) ;; *) echo "$flag must be true or false, got: ${!flag}" >&2; exit 1 ;; esac
+done
 # A runner pod naming a missing PriorityClass is rejected (Forbidden); ARC 0.14 marks
 # the runner Failed and counts it toward maxRunners for good — the pool dies with
 # nothing red anywhere. Refuse to deploy instead.
@@ -152,6 +163,36 @@ listenerTemplate:
         limits: { memory: 256Mi }
 YAML
 
+# Runner-container fragments for CI_HOST_CACHE, spliced into both pod templates.
+CACHE_ENV=""; CACHE_MOUNTS=""; CACHE_VOLUMES=""
+if [ "$CI_HOST_CACHE" = "true" ]; then
+CACHE_ENV="
+      - { name: RUNNER_TOOL_CACHE, value: /opt/hostedtoolcache }
+      - { name: npm_config_cache,  value: /ci-cache/npm }
+      - { name: PUB_CACHE,         value: /ci-cache/pub }"
+CACHE_MOUNTS="
+      - { mountPath: /opt/hostedtoolcache, name: toolcache }
+      - { mountPath: /ci-cache,            name: ci-cache }"
+CACHE_VOLUMES="
+    - { name: toolcache, hostPath: { path: /opt/hostedtoolcache, type: Directory } }
+    - { name: ci-cache,  hostPath: { path: /opt/ci-cache,        type: Directory } }"
+fi
+EXTERNALS_INIT=""; EXTERNALS_MOUNT=""; EXTERNALS_VOLUME=""
+if [ "$DIND_EXTERNALS" = "true" ]; then
+EXTERNALS_INIT="
+    initContainers:
+    - name: init-dind-externals
+      image: $IMAGE
+      imagePullPolicy: IfNotPresent
+      command: [cp, -r, /home/runner/externals/., /home/runner/tmpDir/]
+      volumeMounts:
+      - { mountPath: /home/runner/tmpDir, name: dind-externals }"
+EXTERNALS_MOUNT="
+      - { mountPath: /home/runner/externals, name: dind-externals }"
+EXTERNALS_VOLUME="
+    - { name: dind-externals, emptyDir: { sizeLimit: 1Gi   } }"
+fi
+
 if [ "$DIND" = "false" ]; then
 cat >> "$OVERLAY" << YAML
 template:
@@ -164,6 +205,7 @@ template:
       image: $IMAGE
       imagePullPolicy: IfNotPresent
       command: [/home/runner/run.sh]
+      env:${CACHE_ENV:- []}
       resources:
         requests:
           cpu: "$CPU_REQUEST"
@@ -172,9 +214,9 @@ template:
           cpu: "$CPU_LIMIT"
           memory: $MEM_LIMIT
       volumeMounts:
-      - { mountPath: /home/runner/_work, name: work }
+      - { mountPath: /home/runner/_work, name: work }$CACHE_MOUNTS
     volumes:
-    - { name: work, emptyDir: { sizeLimit: ${WORK_SIZE:-4Gi} } }
+    - { name: work, emptyDir: { sizeLimit: ${WORK_SIZE:-4Gi} } }$CACHE_VOLUMES
 YAML
 else
 cat >> "$OVERLAY" << YAML
@@ -182,14 +224,7 @@ template:
   spec:${PRIORITY_CLASS:+
     priorityClassName: $PRIORITY_CLASS}
     imagePullSecrets:
-    - name: ghcr-pull
-    initContainers:
-    - name: init-dind-externals
-      image: $IMAGE
-      imagePullPolicy: IfNotPresent
-      command: [cp, -r, /home/runner/externals/., /home/runner/tmpDir/]
-      volumeMounts:
-      - { mountPath: /home/runner/tmpDir, name: dind-externals }
+    - name: ghcr-pull$EXTERNALS_INIT
     containers:
     - name: runner
       image: $IMAGE
@@ -199,7 +234,7 @@ template:
       - -c
       - until /usr/bin/docker info >/dev/null 2>&1; do sleep 1; done; exec /home/runner/run.sh
       env:
-      - { name: DOCKER_HOST, value: unix:///var/run/docker.sock }
+      - { name: DOCKER_HOST, value: unix:///var/run/docker.sock }$CACHE_ENV
       resources:
         requests:
           cpu: "$CPU_REQUEST"
@@ -209,7 +244,7 @@ template:
           memory: $MEM_LIMIT
       volumeMounts:
       - { mountPath: /home/runner/_work, name: work }
-      - { mountPath: /var/run, name: dind-sock }
+      - { mountPath: /var/run, name: dind-sock }$CACHE_MOUNTS
     - name: dind
       image: mirror.gcr.io/library/docker:dind
       imagePullPolicy: IfNotPresent
@@ -228,8 +263,7 @@ template:
           memory: $DIND_MEM_LIMIT
       volumeMounts:
       - { mountPath: /home/runner/_work, name: work }
-      - { mountPath: /var/run, name: dind-sock }
-      - { mountPath: /home/runner/externals, name: dind-externals }
+      - { mountPath: /var/run, name: dind-sock }$EXTERNALS_MOUNT
     volumes:
     # work and dind-externals are node disk, not tmpfs. medium: Memory makes the
     # volume RAM the scheduler cannot see — emptyDir does not enter a pod's
@@ -239,8 +273,7 @@ template:
     # leave RAM through swap, which is what put the node into thrash and took
     # k3s down with it. The job tree belongs on the disk that has 134 GiB free.
     - { name: work,           emptyDir: { sizeLimit: 16Gi  } }
-    - { name: dind-sock,      emptyDir: { medium: Memory, sizeLimit: 256Mi } }
-    - { name: dind-externals, emptyDir: { sizeLimit: 1Gi   } }
+    - { name: dind-sock,      emptyDir: { medium: Memory, sizeLimit: 256Mi } }$EXTERNALS_VOLUME$CACHE_VOLUMES
 YAML
 fi
 
