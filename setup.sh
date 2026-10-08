@@ -23,6 +23,29 @@ apt-get install -y -qq curl git jq ufw
 # the setup-qemu-action registration did not, and cost every job 150–270 s.
 apt-get install -y -qq qemu-user-static
 
+echo "=== Kernel and disk ==="
+# Kernel 6.8 (the 24.04 GA kernel) ran into a cgroup writeback storm under CI load on
+# 2026-10-08: 620–1900 inode_switch_wbs kworkers, load up to 785, processes stuck in D
+# state. The HWE kernel (7.0, fix of CVE-2026-64378) does not; the meta package keeps it
+# updated. --no-install-recommends: the recommends drag in firmware this VM has no use for.
+# Takes effect after a reboot.
+apt-get install -y -qq --no-install-recommends linux-generic-hwe-24.04
+# The cloud image mounts / with `discard`: every deleted block is trimmed synchronously,
+# and CI deletes all the time (work dirs, node_modules, buildkit snapshots). On
+# 2026-10-08 that was 4852 discards/s (155 MB/s) at 89% disk util. Trim in one batch a
+# day instead.
+sed -i 's#^\(LABEL=cloudimg-rootfs\s\+/\s\+ext4\s\+\)discard,#\1#' /etc/fstab
+mount -o remount,nodiscard /
+mkdir -p /etc/systemd/system/fstrim.timer.d
+cat > /etc/systemd/system/fstrim.timer.d/daily.conf << 'UNIT'
+[Timer]
+OnCalendar=
+OnCalendar=daily
+RandomizedDelaySec=1h
+UNIT
+systemctl daemon-reload
+systemctl enable --now fstrim.timer
+
 echo "=== k3s (single-node Kubernetes) ==="
 if ! command -v k3s >/dev/null 2>&1; then
   curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--disable=traefik --disable=servicelb --write-kubeconfig-mode=644" sh -
@@ -153,6 +176,7 @@ echo "=== In-cluster helpers ==="
 # and the shared buildkitd the miraj scale-set builds against. These used to be
 # applied by hand, which is why a rebuilt box came up subtly slower.
 kubectl apply -f "$RAW/manifests/registry-cache.yaml"
+kubectl apply -f "$RAW/manifests/registry-ghcr-cache.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-arc-miraj.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-arc-izi-x.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-trusted-arc-izi-x.yaml"
