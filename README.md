@@ -107,7 +107,7 @@ pods beyond the node wait without squeezing running ones, and PriorityClasses or
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
-| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 16 |
+| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 8 |
 | `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 5 |
 | `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
 | `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 20 |
@@ -115,6 +115,13 @@ pods beyond the node wait without squeezing running ones, and PriorityClasses or
 | `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
 | `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 16 |
 | `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 3 |
+
+Small pods starve heavy ones: the scheduler keeps no room for a pending 2-CPU pod, so 250m
+pods take every CPU that frees up and a heavy pod waits behind them (2026-10-08: a PR's
+validate-api Pending 17 min while its build-api started). Hence the PR small ceiling stays at
+measured demand (p95 6, images now build after validation) — 8, not "cheap enough to be many".
+The legacy `izi-x-linux*` pools serve only branches not yet rebased onto the new labels; they
+are held at 4 / 6 / 3 for the same reason until they are uninstalled.
 
 Listeners, buildkitd and the registry cache run at `ci-infra` (above every job, never
 preempting): otherwise a listener recreated by a pool upgrade waits Pending behind jobs on a
@@ -130,7 +137,7 @@ COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
 HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
-env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=16 scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=8  scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=5  scripts/deploy-scale-set.sh
 env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  scripts/deploy-scale-set.sh
 env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=20 PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
