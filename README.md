@@ -153,12 +153,13 @@ env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=17 CACHE_TIER=trusted PRIO
 env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 
-To change only sizing on a live pool, `helm get values` it and `helm upgrade` the same pinned
-chart with the full file — not `--reuse-values --set maxRunners=…`: the chart compares
-`minRunners` (float64 from the stored values) with the int64 from `--set` and fails.
-Changing a pool's pod template recreates its listener; on 2026-10-07 the old listener stayed
-in `Terminating` both times and the pool took no jobs until it was force-deleted
-(`kubectl -n arc-systems delete pod <release>-<hash>-listener --force --grace-period=0`).
+To change only sizing on a live pool: `helm upgrade --reuse-values --set-json maxRunners=N
+--set-json minRunners=M` with the same pinned chart. Plain `--set` fails: the chart compares
+`minRunners` (float64 from the stored values) with the int64 from `--set`.
+Changing a pool's pod template recreates its listener: the controller deletes the old one, which
+shows `Terminating` for up to its 30 s grace period, then the new one starts. That is the normal
+shutdown, not a hang (2026-10-08: `Killing` events 09:04:59–09:05:47, volumes unmounted from
+09:05:31) — no force delete.
 
 Retiring a pool — order matters, or jobs queue for 24h for a label nobody serves: change the
 workflows' `runs-on` first, wait until no queued job asks for the label, then
