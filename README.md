@@ -130,10 +130,15 @@ preempting): otherwise a listener recreated by a pool upgrade waits Pending behi
 full node and its pool takes nothing meanwhile.
 
 All izi-x pools run with `DIND_EXTERNALS=false` and `CI_HOST_CACHE=true`
-(`scripts/install-ci-host-cache.sh` must have run on the node first); `CACHE_TIER` is `pr` for
-the PR pools and `trusted` for main/release. Jobs link `node_modules` to a tree installed once per
-package-lock in `/ci-cache-tier` (izi-x `.github/actions/node-modules`): on 2026-10-08 the per-job
-copies (690 MB / 70k files for api or crm, ~280 GB of ~1 TB in 7 h) were the disk's write ceiling. Service containers of
+(`scripts/install-ci-host-cache.sh` must have run on the node first). `CACHE_TIER` is `pr` for the
+PR pools and `trusted` for main/release, and every host cache exists once per tier under
+`/opt/ci-tier/<tier>`: PR code runs as the same uid as trusted jobs, and the toolcache (node,
+flutter), pub (it checks a package against its stored hash file, not the unpacked files) and
+build_runner output are all executed by release builds. npm's cacache is content-verified on read,
+but it is split too, for one rule instead of a per-cache exception. Jobs link `node_modules` to a
+tree installed once per package-lock in `/ci-cache/node_modules` (izi-x
+`.github/actions/node-modules`): on 2026-10-08 the per-job copies (690 MB / 70k files for api or
+crm, ~280 GB of ~1 TB in 7 h) were the disk's write ceiling. Service containers of
 `k8s` jobs get the `manifests/limitrange-arc-izi-x.yaml` defaults.
 
 ```bash

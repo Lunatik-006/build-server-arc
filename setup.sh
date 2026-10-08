@@ -52,6 +52,21 @@ if ! command -v k3s >/dev/null 2>&1; then
 fi
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
+echo "=== containerd: volatile overlay mounts ==="
+# overlayfs syncs the upper filesystem when a container's rootfs is unmounted. On the one
+# CI disk that sync waits for everyone's writeback: on 2026-10-08 container stops hung for
+# minutes with shim threads in sync_inodes_sb / wb_wait_for_completion, and every pool
+# listener sat in Terminating until force-deleted. CI rootfs is disposable, so skip the sync
+# (overlayfs `volatile`, kernel ≥ 5.10; containerd overlayfs `mount_options`). After a host
+# crash a volatile upperdir is refused on remount — containers then get fresh snapshots.
+install -d /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d
+cat > /var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/overlay-volatile.toml << 'TOML'
+[plugins.'io.containerd.snapshotter.v1.overlayfs']
+  mount_options = ["volatile"]
+TOML
+systemctl restart k3s
+kubectl wait --for=condition=Ready node --all --timeout=180s
+
 echo "=== Control-plane reservation ==="
 # k3s — apiserver, kine and kubelet in one process — shares this box with the
 # builds, and out of the box nothing is held back for it. Under CI load on

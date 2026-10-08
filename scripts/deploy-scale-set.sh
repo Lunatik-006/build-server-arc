@@ -105,11 +105,12 @@ DIND_EXTERNALS="${DIND_EXTERNALS:-true}"
 # CI_HOST_CACHE=true — mount the node-local tool cache and dependency caches
 # (scripts/install-ci-host-cache.sh) into the runner container.
 CI_HOST_CACHE="${CI_HOST_CACHE:-false}"
-# CACHE_TIER=pr|trusted — which half of the node cache the pool writes
-# (/opt/ci-cache-tier/<tier>, mounted at /ci-cache-tier): dependency trees and test
-# caches that jobs execute from. PR code writes only the pr half, so it cannot plant
-# anything main/release jobs run — the same line the two buildkitd draw.
-# Required with CI_HOST_CACHE=true and with CONTAINER_MODE.
+# CACHE_TIER=pr|trusted — which copy of the node caches the pool mounts
+# (/opt/ci-tier/<tier>: toolcache at /opt/hostedtoolcache, dependency and test caches
+# at /ci-cache). PR code runs as the same uid as main/release jobs, so a shared copy
+# would let it replace the node/flutter binaries, pub packages or generated code that
+# trusted builds execute — the same line the two buildkitd draw. Required with
+# CI_HOST_CACHE=true and with CONTAINER_MODE.
 CACHE_TIER="${CACHE_TIER:-}"
 # CONTAINER_MODE=kubernetes-novolume — jobs with `container:`/`services:` run as a pod of
 # their own that the runner creates through the API (ARC container hooks), with images
@@ -196,12 +197,10 @@ CACHE_ENV="
       - { name: PUB_CACHE,         value: /ci-cache/pub }"
 CACHE_MOUNTS="
       - { mountPath: /opt/hostedtoolcache, name: toolcache }
-      - { mountPath: /ci-cache,            name: ci-cache }
-      - { mountPath: /ci-cache-tier,       name: ci-cache-tier }"
+      - { mountPath: /ci-cache,            name: ci-cache }"
 CACHE_VOLUMES="
-    - { name: toolcache,     hostPath: { path: /opt/hostedtoolcache,             type: Directory } }
-    - { name: ci-cache,      hostPath: { path: /opt/ci-cache,                    type: Directory } }
-    - { name: ci-cache-tier, hostPath: { path: /opt/ci-cache-tier/$CACHE_TIER, type: Directory } }"
+    - { name: toolcache, hostPath: { path: /opt/ci-tier/$CACHE_TIER/toolcache, type: Directory } }
+    - { name: ci-cache,  hostPath: { path: /opt/ci-tier/$CACHE_TIER/cache,     type: Directory } }"
 fi
 EXTERNALS_INIT=""; EXTERNALS_MOUNT=""; EXTERNALS_VOLUME=""
 if [ "$DIND_EXTERNALS" = "true" ]; then
@@ -223,8 +222,8 @@ HOOK_ENV=""; HOOK_MOUNT=""; HOOK_VOLUME=""
 if [ "$CONTAINER_MODE" != "none" ]; then
 # The job pod's spec: the hooks merge it into the pod they create (`$job` = the job
 # container) — its limits and its node cache. Job images run as root, so their cache is
-# a tree of its own (/opt/ci-cache-containers, /opt/ci-cache-tier/<tier>-containers):
-# root-owned entries in the runner-uid trees would lock those jobs out of them.
+# a tree of its own (/opt/ci-tier/<tier>-containers): root-owned entries in the
+# runner-uid trees would lock those jobs out of them.
 kubectl -n "$NS" create configmap "$RELEASE-hook-template" \
   --from-literal=template.yaml="spec:${PRIORITY_CLASS:+
   priorityClassName: $PRIORITY_CLASS}
@@ -237,10 +236,8 @@ kubectl -n "$NS" create configmap "$RELEASE-hook-template" \
         - { name: npm_config_cache, value: /ci-cache/npm }
       volumeMounts:
         - { mountPath: /ci-cache, name: ci-cache-containers }
-        - { mountPath: /ci-cache-tier, name: ci-cache-tier-containers }
   volumes:
-    - { name: ci-cache-containers, hostPath: { path: /opt/ci-cache-containers, type: Directory } }
-    - { name: ci-cache-tier-containers, hostPath: { path: /opt/ci-cache-tier/$CACHE_TIER-containers, type: Directory } }
+    - { name: ci-cache-containers, hostPath: { path: /opt/ci-tier/$CACHE_TIER-containers, type: Directory } }
 " --dry-run=client -o yaml | kubectl apply -f -
 cat >> "$OVERLAY" << YAML
 containerMode:
