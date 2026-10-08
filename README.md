@@ -108,7 +108,8 @@ pods beyond the node wait without squeezing running ones, and PriorityClasses or
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
 | `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 8 |
-| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 5 |
+| `izi-x-pr-required` | pr | `ci-pr-required` | 2/4Gi → 4/6Gi | — | 4 |
+| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 2 |
 | `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
 | `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 20 |
 | `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 4 |
@@ -122,6 +123,11 @@ validate-api Pending 17 min while its build-api started). Hence the PR small cei
 measured demand (p95 6, images now build after validation) — 8, not "cheap enough to be many".
 The legacy `izi-x-linux*`, `izi-x-main-docker` and `izi-x-pr-docker` pools were uninstalled on
 2026-10-08: a branch still on the old labels rebases onto main.
+
+Required PR checks (validate api/crm, behind the merge gates) have their own pool,
+`izi-x-pr-required`, at `ci-pr-required`: ahead of every optional PR job (mobile checks, compat,
+schema audit), behind main and release. Its ceiling is two pushes' validation (2 × api+crm);
+`izi-x-pr-heavy` keeps the optional heavy jobs (mobile checks) at 2.
 
 Listeners, buildkitd and the registry cache run at `ci-infra` (above every job, never
 preempting): otherwise a listener recreated by a pool upgrade waits Pending behind jobs on a
@@ -138,7 +144,8 @@ SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi W
 HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
 env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=8  scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=5  scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-pr-required   MIN=0 MAX=4  PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=2  scripts/deploy-scale-set.sh
 env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  scripts/deploy-scale-set.sh
 env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=20 PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=4  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh

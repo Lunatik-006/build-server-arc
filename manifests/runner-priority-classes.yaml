@@ -37,3 +37,14 @@ value: 10000
 preemptionPolicy: Never
 globalDefault: false
 description: CI infrastructure a pool cannot work without
+---
+# Required PR checks (the merge gates' validation) ahead of optional PR jobs: on a full
+# node an optional job otherwise takes the slot a gate waits for. Below main and release.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ci-pr-required
+value: 1000
+preemptionPolicy: Never
+globalDefault: false
+description: Required checks of pull requests
