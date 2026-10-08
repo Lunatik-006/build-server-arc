@@ -213,10 +213,14 @@ outage and cost ~12 hours:
 - the `AutoscalingListener` CR keeps pointing at a deleted `EphemeralRunnerSet`, so the
   listener pod crash-loops on `could not patch ephemeral runner set ... not found`;
 - the controller wedges outright (log frozen mid `deleting runner scale set`) and no listener
-  is created at all.
+  is created at all;
+- the listener pod stays Running and Ready, but after a network outage its long-poll to the
+  GitHub broker never returns again (2026-10-08: ten listeners, `Client.Timeout exceeded while
+  awaiting headers`, until their pods were recreated). A healthy listener logs
+  `Calculated target runner count` after every poll (~50 s); none in 10 minutes is a strike.
 
 The watchdog heals on the second consecutive unhealthy check — deleting the stale listener CR
-in the first case, restarting the controller in the second — and announces what it did to
+in the first case, restarting the controller in the second, deleting the listener pod in the third — and announces what it did to
 Telegram if `/etc/arc-watchdog/tg-token` (chmod 600) and `TG_CHAT=` in `/etc/arc-watchdog/config`
 are present. Without those it heals silently.
 
