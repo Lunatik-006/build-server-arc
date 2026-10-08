@@ -98,7 +98,11 @@ p95 — about 15.5 CPU / 43 GiB left for izi-x jobs. Requests follow sustained u
 average): heavy 1.6–2.2 CPU (peak p90 3.3, memory p90 4.4 GiB, max 6.0 at the limit); small
 ≤0.64 CPU / 0.62 GiB. Ceilings follow demand: heavy concurrency was pinned at the old pool's
 MAX of 12 with ~11-minute jobs, now ~6 at half the duration; image builds are thin buildx
-clients (~16 workflows per push to main); `e2e` is serialized by its concurrency group. Pending
+clients; `e2e` is serialized by its concurrency group. main/release ceilings are not demand
+estimates but the jobs one push starts at once, so a push never waits for itself: a push to main
+can start 19 image workflows (their first-layer jobs, ~20 small) and up to 4 heavy (validate api
+and crm, kkm-watcher, the mobile build); release 14 workflows (16 small) and 3 heavy. Pending
+main/release pods go ahead of PR pods by priority, so a higher ceiling there only reorders the queue. Pending
 pods beyond the node wait without squeezing running ones, and PriorityClasses order them.
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
@@ -106,11 +110,11 @@ pods beyond the node wait without squeezing running ones, and PriorityClasses or
 | `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 16 |
 | `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 5 |
 | `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
-| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 10 |
-| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 2 |
+| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 20 |
+| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 4 |
 | `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
-| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 6 |
-| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 2 |
+| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 16 |
+| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 3 |
 
 Listeners, buildkitd and the registry cache run at `ci-infra` (above every job, never
 preempting): otherwise a listener recreated by a pool upgrade waits Pending behind jobs on a
@@ -129,11 +133,11 @@ K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi
 env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=16 scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=5  scripts/deploy-scale-set.sh
 env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=10 PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=2  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=20 PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=4  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
 env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=6  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=2  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=16 PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 
 To change only sizing on a live pool, `helm get values` it and `helm upgrade` the same pinned
