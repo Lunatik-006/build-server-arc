@@ -91,39 +91,49 @@ Image builds run on two persistent buildkitd: `buildkitd` (PR code,
 `vars.TRUSTED_BUILDKIT_ENDPOINT`) — a cache mount shared with PR code could poison a prod
 image. arm64 runs through the host's binfmt (`qemu-user-static`, setup.sh).
 
-Sizes are measured per container on bld1 on 2026-10-07 (`host="bld1"` in the dev
-VictoriaMetrics): small jobs ≤613 MiB / ≤1.73 cores; validate-crm 6.0 GiB at its 6Gi limit
-and 4.1 cores, mobile checks 3.6 GiB / 3.3 cores; migrations compat ≤1346 MiB.
+Sizes and ceilings come from VictoriaMetrics (`host="bld1"`, 3 days to 2026-10-08) and the node
+budget. Node: 21.5 CPU / 57.8 GiB allocatable; fixed consumers (three buildkitd at 1 CPU, registry
+cache, ARC, monitoring) 3.6 CPU / 6.9 GiB, 16 listeners 0.8 CPU, the Miraj pool ~1.5 CPU at its
+p95 — about 15.5 CPU / 43 GiB left for izi-x jobs. Requests follow sustained use (p90 of a pod's
+average): heavy 1.6–2.2 CPU (peak p90 3.3, memory p90 4.4 GiB, max 6.0 at the limit); small
+≤0.64 CPU / 0.62 GiB. Ceilings follow demand: heavy concurrency was pinned at the old pool's
+MAX of 12 with ~11-minute jobs, now ~6 at half the duration; image builds are thin buildx
+clients (~16 workflows per push to main); `e2e` is serialized by its concurrency group. Pending
+pods beyond the node wait without squeezing running ones, and PriorityClasses order them.
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
-| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 20 |
-| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 6 |
+| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 16 |
+| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 5 |
 | `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
-| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 3 |
-| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 4 |
-| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 2 |
-| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 4 |
-| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 5 |
+| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 10 |
+| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 2 |
+| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
+| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 6 |
+| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 2 |
+
+Listeners, buildkitd and the registry cache run at `ci-infra` (above every job, never
+preempting): otherwise a listener recreated by a pool upgrade waits Pending behind jobs on a
+full node and its pool takes nothing meanwhile.
 
 All izi-x pools run with `DIND_EXTERNALS=false` and `CI_HOST_CACHE=true`
 (`scripts/install-ci-host-cache.sh` must have run on the node first). Service containers of
 `k8s` jobs get the `manifests/limitrange-arc-izi-x.yaml` defaults.
 
 ```bash
-# First: kubectl apply -f manifests/runner-priority-classes.yaml manifests/limitrange-arc-izi-x.yaml
+# First: kubectl apply -f manifests/runner-priority-classes.yaml -f manifests/limitrange-arc-izi-x.yaml
 COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=ghcr.io/jakwuh/actions-runner:<sha> PRIVATE_KEY_FILE=<app>.pem DIND_EXTERNALS=false CI_HOST_CACHE=true"
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
 HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
-env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=20 scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=6  scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=16 scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=5  scripts/deploy-scale-set.sh
 env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=3  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=4  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=2  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=4  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=5  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=10 PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=2  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=6  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=2  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 
 To change only sizing on a live pool, `helm get values` it and `helm upgrade` the same pinned
