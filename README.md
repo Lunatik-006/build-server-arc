@@ -103,7 +103,7 @@ Ceilings — below the table.
 | `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
 | `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 22 |
 | `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 3 |
-| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
+| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/6Gi → 4/10Gi | 1 |
 | `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 17 |
 | `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 3 |
 
@@ -147,13 +147,16 @@ COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
 HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
+# izi-x-main-k8s runs only izi-x e2e: 11 Playwright workers with their browsers. At 6Gi the
+# memcg killed the suite twice on 2026-10-08 (16:03, 21:28 UTC: ~5.9 GB node + ~2.8 GB chrome).
+E2E="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=6Gi CPU_LIMIT=4 MEM_LIMIT=10Gi WORK_SIZE=8Gi"
 env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=16 CACHE_TIER=pr scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-pr-required   MIN=0 MAX=4  CACHE_TIER=pr PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=4  CACHE_TIER=pr scripts/deploy-scale-set.sh
 env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  CACHE_TIER=pr scripts/deploy-scale-set.sh
 env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=22 CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $E2E   NAME=izi-x-main-k8s      MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
 env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=17 CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
