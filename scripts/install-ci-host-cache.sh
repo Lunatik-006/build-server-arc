@@ -33,8 +33,11 @@ install -d -o "$RUNNER_UID" -g "$RUNNER_UID" \
   "$TOOLCACHE" "$NODE_DIR" "$FLUTTER_DIR" \
   /opt/ci-cache /opt/ci-cache/npm /opt/ci-cache/pub /opt/ci-cache/dart-analysis-driver \
   /opt/ci-cache/vitest-crm /opt/ci-cache/build-runner
+# Per trust tier (deploy-scale-set.sh CACHE_TIER): what jobs execute from — shared
+# node_modules trees (izi-x .github/actions/node-modules) and test caches.
+install -d -o "$RUNNER_UID" -g "$RUNNER_UID"   /opt/ci-cache-tier/pr /opt/ci-cache-tier/trusted   /opt/ci-cache-tier/pr/node_modules /opt/ci-cache-tier/trusted/node_modules   /opt/ci-cache-tier/pr/vitest-crm /opt/ci-cache-tier/trusted/vitest-crm
 # Cache of the jobs that run in their own container (CONTAINER_MODE pools): as root.
-install -d /opt/ci-cache-containers /opt/ci-cache-containers/npm
+install -d /opt/ci-cache-containers /opt/ci-cache-containers/npm   /opt/ci-cache-tier/pr-containers /opt/ci-cache-tier/trusted-containers
 
 if [ ! -f "$NODE_DIR.complete" ]; then
   curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" \

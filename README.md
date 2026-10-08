@@ -91,50 +91,49 @@ Image builds run on two persistent buildkitd: `buildkitd` (PR code,
 `vars.TRUSTED_BUILDKIT_ENDPOINT`) — a cache mount shared with PR code could poison a prod
 image. arm64 runs through the host's binfmt (`qemu-user-static`, setup.sh).
 
-Sizes and ceilings come from VictoriaMetrics (`host="bld1"`, 3 days to 2026-10-08) and the node
-budget. Node: 21.5 CPU / 57.8 GiB allocatable; fixed consumers (three buildkitd at 1 CPU, registry
-cache, ARC, monitoring) 3.6 CPU / 6.9 GiB, 16 listeners 0.8 CPU, the Miraj pool ~1.5 CPU at its
-p95 — about 15.5 CPU / 43 GiB left for izi-x jobs. Requests follow sustained use (p90 of a pod's
-average): heavy 1.6–2.2 CPU (peak p90 3.3, memory p90 4.4 GiB, max 6.0 at the limit); small
-≤0.64 CPU / 0.62 GiB. Ceilings follow demand: heavy concurrency was pinned at the old pool's
-MAX of 12 with ~11-minute jobs, now ~6 at half the duration; image builds are thin buildx
-clients; `e2e` is serialized by its concurrency group. main/release ceilings are not demand
-estimates but the jobs one push starts at once, so a push never waits for itself: a push to main
-can start 19 image workflows (their first-layer jobs, ~20 small) and up to 4 heavy (validate api
-and crm, kkm-watcher, the mobile build); release 14 workflows (16 small) and 3 heavy. Pending
-main/release pods go ahead of PR pods by priority, so a higher ceiling there only reorders the queue. Pending
-pods beyond the node wait without squeezing running ones, and PriorityClasses order them.
+Requests follow sustained use (VictoriaMetrics `host="bld1"`, p90 of a pod's average): heavy
+1.6–2.2 CPU (peak p90 3.3, memory p90 4.4 GiB, max 6.0 at the limit); small ≤0.64 CPU / 0.62 GiB.
+Ceilings — below the table.
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
-| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 8 |
+| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 16 |
 | `izi-x-pr-required` | pr | `ci-pr-required` | 2/4Gi → 4/6Gi | — | 4 |
-| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 2 |
+| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 4 |
 | `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
-| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 20 |
-| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 4 |
+| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 22 |
+| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 3 |
 | `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
-| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 16 |
+| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 17 |
 | `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 3 |
 
-Small pods starve heavy ones: the scheduler keeps no room for a pending 2-CPU pod, so 250m
-pods take every CPU that frees up and a heavy pod waits behind them (2026-10-08: a PR's
-validate-api Pending 17 min while its build-api started). Hence the PR small ceiling stays at
-measured demand (p95 6, images now build after validation) — 8, not "cheap enough to be many".
+Ceilings, one formula. Budget = allocatable minus the non-job requests (listeners, buildkitd,
+registries, Miraj): 21.5 − 4.1 = 17.4 CPU on 2026-10-08. Demand of a pool = peak concurrency of
+its jobs over [created_at, created_at + run time] (GitHub jobs API, 5232 jobs, 30 h to
+2026-10-08), so queueing does not count as demand. Request-weighted, main+release peak at 13.0 CPU
+(p95 8.8), required PR checks at 26.0 (p95 18.0), all other PR jobs at 39.2 (p95 21.6); all
+together 60.7 (p50 18.2). Only main/release fit, so they get their peak: main-small 22, main-heavy 3,
+release-small 17, release-large 3. Required PR checks get what is
+left at the trusted p95: 17.4 − 8.8 ≈ 4 heavy pods. Everything else is queue by construction, and
+PriorityClasses order it; optional PR ceilings (small 16, heavy 4) only bound how much CPU a
+burst of optional jobs can hold when a required one frees up behind it — the scheduler keeps no
+room for a pending 2-CPU pod, so 250m pods would otherwise take every CPU that frees up.
 The legacy `izi-x-linux*`, `izi-x-main-docker` and `izi-x-pr-docker` pools were uninstalled on
 2026-10-08: a branch still on the old labels rebases onto main.
 
 Required PR checks (validate api/crm, behind the merge gates) have their own pool,
 `izi-x-pr-required`, at `ci-pr-required`: ahead of every optional PR job (mobile checks, compat,
-schema audit), behind main and release. Its ceiling is two pushes' validation (2 × api+crm);
-`izi-x-pr-heavy` keeps the optional heavy jobs (mobile checks) at 2.
+schema audit), behind main and release.
 
 Listeners, buildkitd and the registry cache run at `ci-infra` (above every job, never
 preempting): otherwise a listener recreated by a pool upgrade waits Pending behind jobs on a
 full node and its pool takes nothing meanwhile.
 
 All izi-x pools run with `DIND_EXTERNALS=false` and `CI_HOST_CACHE=true`
-(`scripts/install-ci-host-cache.sh` must have run on the node first). Service containers of
+(`scripts/install-ci-host-cache.sh` must have run on the node first); `CACHE_TIER` is `pr` for
+the PR pools and `trusted` for main/release. Jobs link `node_modules` to a tree installed once per
+package-lock in `/ci-cache-tier` (izi-x `.github/actions/node-modules`): on 2026-10-08 the per-job
+copies (690 MB / 70k files for api or crm, ~280 GB of ~1 TB in 7 h) were the disk's write ceiling. Service containers of
 `k8s` jobs get the `manifests/limitrange-arc-izi-x.yaml` defaults.
 
 ```bash
@@ -143,15 +142,15 @@ COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
 HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
-env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=8  scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-pr-required   MIN=0 MAX=4  PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=2  scripts/deploy-scale-set.sh
-env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=20 PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=4  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=16 PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=16 CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-pr-required   MIN=0 MAX=4  CACHE_TIER=pr PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=4  CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=22 CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=17 CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 
 To change only sizing on a live pool, `helm get values` it and `helm upgrade` the same pinned
