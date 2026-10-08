@@ -31,7 +31,10 @@ FLUTTER_DIR="$TOOLCACHE/flutter/stable-$FLUTTER_VERSION-x64"
 
 install -d -o "$RUNNER_UID" -g "$RUNNER_UID" \
   "$TOOLCACHE" "$NODE_DIR" "$FLUTTER_DIR" \
-  /opt/ci-cache /opt/ci-cache/npm /opt/ci-cache/pub /opt/ci-cache/dart-analysis-driver
+  /opt/ci-cache /opt/ci-cache/npm /opt/ci-cache/pub /opt/ci-cache/dart-analysis-driver \
+  /opt/ci-cache/vitest-crm /opt/ci-cache/build-runner
+# Cache of the jobs that run in their own container (CONTAINER_MODE pools): as root.
+install -d /opt/ci-cache-containers /opt/ci-cache-containers/npm
 
 if [ ! -f "$NODE_DIR.complete" ]; then
   curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" \

@@ -79,42 +79,51 @@ made by the workflow's `runs-on`:
   `pull_request_target` and `issue_comment` report `ref_name=main`, hence the event check).
   Release and main have their own `maxRunners`, so they never queue behind PR jobs for a
   runner, and a PriorityClass that puts their pods first when the node is full;
-- **size** — `small` (no dind: gates, deploy, validate-api/e2e, schema audit, secret scan,
-  build clients of the shared buildkitd), `heavy` (no dind: validate-crm, mobile checks),
-  `docker` (dind: migrations compat services, e2e, image builds on main/release).
+- **size** — `small` (no dind: gates, deploy, schema audit, secret scan, and every image
+  build — they are only clients of a persistent buildkitd), `heavy` (no dind: validate
+  api/crm, mobile checks), `k8s` (`CONTAINER_MODE=kubernetes-novolume`: jobs with
+  `container:`/`services:` — migrations compat, e2e — run as their own pod on images the
+  node's containerd keeps; in dind they were pulled and unpacked into an empty store on
+  every job, 173–1648 s to start).
+
+Image builds run on two persistent buildkitd: `buildkitd` (PR code,
+`vars.PR_BUILDKIT_ENDPOINT`) and `buildkitd-trusted` (main/release only, NetworkPolicy,
+`vars.TRUSTED_BUILDKIT_ENDPOINT`) — a cache mount shared with PR code could poison a prod
+image. arm64 runs through the host's binfmt (`qemu-user-static`, setup.sh).
 
 Sizes are measured per container on bld1 on 2026-10-07 (`host="bld1"` in the dev
 VictoriaMetrics): small jobs ≤613 MiB / ≤1.73 cores; validate-crm 6.0 GiB at its 6Gi limit
-and 4.1 cores, mobile checks 3.6 GiB / 3.3 cores; migrations compat runner ≤1346 MiB,
-dind ≤113 MiB. `MAX` is the highest concurrency each pair reached over 2026-10-05..07.
+and 4.1 cores, mobile checks 3.6 GiB / 3.3 cores; migrations compat ≤1346 MiB.
 
-| scale set | tier | PriorityClass | runner req → lim | dind req → lim | MAX |
+| scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
 | `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 20 |
 | `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 6 |
-| `izi-x-pr-docker` | pr | — | 250m/512Mi → 2/2Gi | 250m/256Mi → 4/4Gi | 7 |
+| `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
 | `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 3 |
-| `izi-x-main-docker` | main | `ci-main` | 250m/512Mi → 2/2Gi | 250m/256Mi → 4/4Gi | 9 |
+| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 4 |
+| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 2 |
 | `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 4 |
-| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | 250m/256Mi → 4/4Gi | 5 |
+| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 5 |
 
-All izi-x pools run with `DIND_EXTERNALS=false` (no izi-x job uses `container:` or a
-docker-based action) and `CI_HOST_CACHE=true` (`scripts/install-ci-host-cache.sh` must have
-run on the node first).
+All izi-x pools run with `DIND_EXTERNALS=false` and `CI_HOST_CACHE=true`
+(`scripts/install-ci-host-cache.sh` must have run on the node first). Service containers of
+`k8s` jobs get the `manifests/limitrange-arc-izi-x.yaml` defaults.
 
 ```bash
-# First: kubectl apply -f manifests/runner-priority-classes.yaml
+# First: kubectl apply -f manifests/runner-priority-classes.yaml manifests/limitrange-arc-izi-x.yaml
 COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=ghcr.io/jakwuh/actions-runner:<sha> PRIVATE_KEY_FILE=<app>.pem DIND_EXTERNALS=false CI_HOST_CACHE=true"
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
-HEAVY="CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi"
-DOCKER="CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=256Mi"
-env $COMMON $SMALL  NAME=izi-x-pr-small      MIN=1 MAX=20 scripts/deploy-scale-set.sh
-env $COMMON $HEAVY  NAME=izi-x-pr-heavy      MIN=0 MAX=6  DIND=false WORK_SIZE=16Gi scripts/deploy-scale-set.sh
-env $COMMON $DOCKER NAME=izi-x-pr-docker     MIN=0 MAX=7  scripts/deploy-scale-set.sh
-env $COMMON $SMALL  NAME=izi-x-main-small    MIN=0 MAX=3  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $DOCKER NAME=izi-x-main-docker   MIN=0 MAX=9  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $SMALL  NAME=izi-x-release-small MIN=0 MAX=4  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
-env $COMMON $HEAVY  NAME=izi-x-release-large MIN=0 MAX=5  PRIORITY_CLASS=ci-release DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=256Mi scripts/deploy-scale-set.sh
+HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
+K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
+env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=20 scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=6  scripts/deploy-scale-set.sh
+env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=3  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=4  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=2  PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=4  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=5  PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 
 To change only sizing on a live pool, `helm get values` it and `helm upgrade` the same pinned

@@ -18,6 +18,10 @@ fi
 echo "=== System packages ==="
 apt-get update -qq
 apt-get install -y -qq curl git jq ufw
+# arm64 image builds (prod-sa) on the persistent buildkitd: qemu-user-static registers
+# the binfmt handlers with the F flag through systemd-binfmt, so they survive a reboot —
+# the setup-qemu-action registration did not, and cost every job 150–270 s.
+apt-get install -y -qq qemu-user-static
 
 echo "=== k3s (single-node Kubernetes) ==="
 if ! command -v k3s >/dev/null 2>&1; then
@@ -151,6 +155,8 @@ echo "=== In-cluster helpers ==="
 kubectl apply -f "$RAW/manifests/registry-cache.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-arc-miraj.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-arc-izi-x.yaml"
+kubectl apply -f "$RAW/manifests/buildkitd-trusted-arc-izi-x.yaml"
+kubectl apply -f "$RAW/manifests/limitrange-arc-izi-x.yaml"
 # Runner pod priorities — a pool deployed with PRIORITY_CLASS dies silently without them.
 kubectl apply -f "$RAW/manifests/runner-priority-classes.yaml"
 
