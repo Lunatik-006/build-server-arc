@@ -50,3 +50,27 @@ for tier in pr trusted; do
   # working directory for a project, so run it from one the runner user can read.
   (cd /tmp && setpriv --reuid="$RUNNER_UID" --regid="$RUNNER_UID" --clear-groups     env HOME=/tmp PUB_CACHE="$root/cache/pub" "$flutter_dir/flutter/bin/flutter" precache)
 done
+
+# The shared node_modules trees live in RAM. bld1's disk answers a read in ~7 ms and a
+# write in ~14 ms under CI load (iostat, 2026-10-08); node loading a cold tree waits on
+# each file, which put single jest tests at 2.4 s. A tree is ~700 MB, a tier holds a few
+# (one per package-lock), RAM has ~55 GB available. tmpfs comes back empty after a
+# reboot and the first job of each lock reinstalls it. A mount made here does not reach
+# pods already running (hostPath has no mount propagation): they keep the disk copy.
+mount_ram() {  # <dir> <size> <uid>
+  grep -q " $1 tmpfs " /etc/fstab ||
+    echo "tmpfs $1 tmpfs size=$2,mode=0755,uid=$3,gid=$3,noatime 0 0" >> /etc/fstab
+  mountpoint -q "$1" && return 0
+  mount "$1"
+  # Seed the RAM copy from the disk directory it now covers: a non-recursive bind of
+  # the parent shows what is under the new mount.
+  local under; under=$(mktemp -d)
+  mount --bind "$(dirname "$1")" "$under"
+  cp -a "$under/$(basename "$1")/." "$1/"
+  umount "$under"
+  rmdir "$under"
+}
+for tier in pr trusted; do
+  mount_ram "/opt/ci-tier/$tier/cache/node_modules" 8g "$RUNNER_UID"
+  mount_ram "/opt/ci-tier/$tier-containers/node_modules" 4g 0
+done
