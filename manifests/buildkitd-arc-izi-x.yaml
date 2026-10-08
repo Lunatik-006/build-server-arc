@@ -44,6 +44,7 @@ spec:
     metadata:
       labels: { app: buildkitd }
     spec:
+      priorityClassName: ci-infra
       containers:
         - name: buildkitd
           image: mirror.gcr.io/moby/buildkit:v0.30.0

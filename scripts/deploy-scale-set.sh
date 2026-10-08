@@ -158,6 +158,7 @@ minRunners: $MIN
 maxRunners: $MAX
 listenerTemplate:
   spec:
+    priorityClassName: ci-infra
     # The listener is the only thing that can accept a job from GitHub, and on a
     # single-node cluster there is nowhere to reschedule it — the default 300s
     # NoExecute tolerations only guarantee that a node blip takes the pool
