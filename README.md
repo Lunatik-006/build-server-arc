@@ -120,8 +120,8 @@ Small pods starve heavy ones: the scheduler keeps no room for a pending 2-CPU po
 pods take every CPU that frees up and a heavy pod waits behind them (2026-10-08: a PR's
 validate-api Pending 17 min while its build-api started). Hence the PR small ceiling stays at
 measured demand (p95 6, images now build after validation) — 8, not "cheap enough to be many".
-The legacy `izi-x-linux*` pools serve only branches not yet rebased onto the new labels; they
-are held at 4 / 6 / 3 for the same reason until they are uninstalled.
+The legacy `izi-x-linux*`, `izi-x-main-docker` and `izi-x-pr-docker` pools were uninstalled on
+2026-10-08: a branch still on the old labels rebases onto main.
 
 Listeners, buildkitd and the registry cache run at `ci-infra` (above every job, never
 preempting): otherwise a listener recreated by a pool upgrade waits Pending behind jobs on a
