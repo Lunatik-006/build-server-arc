@@ -91,8 +91,6 @@ Image builds run on two persistent buildkitd: `buildkitd` (PR code,
 `vars.TRUSTED_BUILDKIT_ENDPOINT`) — a cache mount shared with PR code could poison a prod
 image. arm64 runs through the host's binfmt (`qemu-user-static`, setup.sh).
 
-Requests follow sustained use (VictoriaMetrics `host="bld1"`, p90 of a pod's average): heavy
-1.6–2.2 CPU (peak p90 3.3, memory p90 4.4 GiB, max 6.0 at the limit); small ≤0.64 CPU / 0.62 GiB.
 Sizing — below the table.
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
