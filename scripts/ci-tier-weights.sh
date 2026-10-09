@@ -22,8 +22,11 @@ NS=arc-izi-x
 log() { echo "$(date -u +%FT%TZ) $*"; }
 
 idle_tier() {  # <pod name> <priorityClassName>
+  # The PR buildkitd runs at ci-infra so it is never Pending behind jobs, but the builds
+  # it runs are PR builds.
+  case "$1" in buildkitd-trusted-*) return 1 ;; buildkitd-*) return 0 ;; esac
   case "$2" in ci-release|ci-main|ci-pr-required|ci-infra) return 1 ;; esac
-  case "$1" in izi-x-pr-*|buildkitd-[0-9a-f]*) return 0 ;; esac
+  case "$1" in izi-x-pr-*) return 0 ;; esac
   return 1
 }
 
