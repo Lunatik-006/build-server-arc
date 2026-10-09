@@ -132,7 +132,10 @@ used to share CPU with a release build by requests and the disk equally. Now:
   The kubelet sets a pod cgroup's resources only at creation, so the values hold.
 - `iocost.service` enables blk-iocost on `sda` at boot with `/etc/iocost.model`, the output of the
   kernel's `tools/cgroup/iocost_coef_gen.py` run on this disk with no jobs running:
-  `python3 iocost_coef_gen.py --testfile-size-gb 16 > /etc/iocost.model`.
+  `python3 iocost_coef_gen.py --testfile-size-gb 16 > /etc/iocost.model`. bld1, 2026-10-09 01:45 UTC:
+  `8:0 rbps=810426024 rseqiops=23498 rrandiops=7315 wbps=127570737 wseqiops=11981 wrandiops=3735`.
+  The model sets the relative cost of IO kinds; the QoS stays at the kernel's defaults, so the
+  controller scales the issue rate by the device's own saturation state.
 - Optional PR pools request `CPU_REQUEST=10m`: their CPU is bounded by `cpu.idle`, not by the
   scheduler, so a PR reservation can no longer keep a main/release pod Pending. pr-heavy `MAX=9`:
   the job budget of 17.4 CPU over 1.83 cores per pr-heavy job (2026-10-08) — past that more pods
