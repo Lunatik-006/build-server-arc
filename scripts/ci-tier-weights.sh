@@ -7,14 +7,16 @@
 # and pr-k8s pools and their -workflow pods, which carry no PriorityClass, and the PR
 # buildkitd — into the idle tier on its pod cgroup:
 #
-#   cpu.idle  1        SCHED_IDLE for the group: it runs only on CPU no sibling wants.
-#   io.weight default 1  the smallest iocost share (others keep 100); iocost is work-conserving,
-#                      so with no contention the idle tier still gets the whole disk.
+#   CPUWeight=idle  cpu.idle 1, SCHED_IDLE for the group: it runs only on CPU no sibling wants.
+#   IOWeight=1      io.weight 1, the smallest iocost share (others keep 100); iocost is
+#                   work-conserving, so with no contention the idle tier still gets the disk.
 #
 # The kubelet writes a pod cgroup's resources only when it creates it
-# (pod_container_manager_linux.go EnsureExists) and touches only the QoS-class cgroups
-# afterwards, so these values hold for the pod's life. iocost itself is enabled at boot
-# by iocost.service.
+# (pod_container_manager_linux.go EnsureExists). With the systemd cgroup driver the pod
+# cgroup is a systemd slice, and systemd re-applies its own properties to it whenever a
+# container scope starts under it — a value written to the cgroup file is reset. The tier
+# is therefore set as the slice's systemd properties (CPUWeight=idle is cpu.idle, IOWeight
+# is io.weight), which systemd then keeps. iocost itself is enabled by iocost.service.
 set -uo pipefail
 export KUBECONFIG="${KUBECONFIG:-/etc/rancher/k3s/k3s.yaml}"
 NS=arc-izi-x
@@ -40,7 +42,7 @@ while read -r uid name pc; do
              /sys/fs/cgroup/kubepods.slice/kubepods-*.slice/kubepods-*-pod"${uid//-/_}".slice 2>/dev/null | head -1)
   # The cgroup appears when the pod is admitted; a later watch event of the same pod retries.
   [ -n "$cg" ] || continue
-  if echo 1 > "$cg/cpu.idle" && echo "default 1" > "$cg/io.weight"; then
+  if systemctl set-property --runtime "$(basename "$cg")" CPUWeight=idle IOWeight=1; then
     done[$uid]=idle
     log "idle tier: $name"
   else

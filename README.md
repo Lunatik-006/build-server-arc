@@ -128,8 +128,9 @@ used to share CPU with a release build by requests and the disk equally. Now:
 
 - `scripts/ci-tier-weights.sh` (`ci-tier-weights.service`) puts every optional PR pod — pr-small,
   pr-heavy, pr-k8s and their `-workflow` pods, and the PR buildkitd — into the idle tier on its pod
-  cgroup: `cpu.idle 1` (runs only on CPU no other pod wants) and `io.weight default 1` (others 100).
-  The kubelet sets a pod cgroup's resources only at creation, so the values hold.
+  slice through systemd: `CPUWeight=idle` (cpu.idle — runs only on CPU no other pod wants) and
+  `IOWeight=1` (others 100). A direct write to the cgroup file does not hold: systemd re-applies a
+  slice's properties whenever a container scope starts under it.
 - `iocost.service` enables blk-iocost on `sda` at boot with `/etc/iocost.model`, the output of the
   kernel's `tools/cgroup/iocost_coef_gen.py` run on this disk with no jobs running:
   `python3 iocost_coef_gen.py --testfile-size-gb 16 > /etc/iocost.model`. bld1, 2026-10-09 01:45 UTC:
