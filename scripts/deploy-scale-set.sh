@@ -224,11 +224,16 @@ if [ "$CONTAINER_MODE" != "none" ]; then
 # container) — its limits and its node cache. Job images run as root, so their cache is
 # a tree of its own (/opt/ci-tier/<tier>-containers): root-owned entries in the
 # runner-uid trees would lock those jobs out of them.
+# Job images are referenced by mutable tags (izi-x e2e: `e2e-tests:dev`); without a
+# policy Kubernetes takes IfNotPresent and the node runs whatever it pulled first —
+# e2e kept the image without its spec cache for a day after it was rebuilt. Always
+# only resolves the tag's digest against the registry; unchanged layers stay in containerd.
 kubectl -n "$NS" create configmap "$RELEASE-hook-template" \
   --from-literal=template.yaml="spec:${PRIORITY_CLASS:+
   priorityClassName: $PRIORITY_CLASS}
   containers:
     - name: \$job
+      imagePullPolicy: Always
       resources:
         requests: { cpu: \"$CPU_REQUEST\", memory: $MEM_REQUEST }
         limits: { cpu: \"$CPU_LIMIT\", memory: $MEM_LIMIT }
