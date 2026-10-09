@@ -97,14 +97,14 @@ Ceilings — below the table.
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
-| `izi-x-pr-small` | pr | — | 250m/512Mi → 2/1Gi | — | 16 |
+| `izi-x-pr-small` | pr | — | 10m/512Mi → 2/1Gi | — | 16 |
 | `izi-x-pr-required` | pr | `ci-pr-required` | 2/4Gi → 4/6Gi | — | 4 |
-| `izi-x-pr-heavy` | pr | — | 2/4Gi → 4/6Gi | — | 4 |
-| `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 6 |
-| `izi-x-main-small` | main | `ci-main` | 250m/512Mi → 2/1Gi | — | 22 |
+| `izi-x-pr-heavy` | pr | — | 10m/4Gi → 4/6Gi | — | 9 |
+| `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 10m/2Gi → 4/6Gi | 6 |
+| `izi-x-main-small` | main | `ci-main` | 100m/512Mi → 2/1Gi | — | 22 |
 | `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 3 |
-| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/6Gi → 4/10Gi | 1 |
-| `izi-x-release-small` | release | `ci-release` | 250m/512Mi → 2/1Gi | — | 17 |
+| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
+| `izi-x-release-small` | release | `ci-release` | 50m/512Mi → 2/1Gi | — | 17 |
 | `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 3 |
 
 Ceilings, one formula. Budget = allocatable minus the non-job requests (listeners, buildkitd,
@@ -120,6 +120,25 @@ burst of optional jobs can hold when a required one frees up behind it — the s
 room for a pending 2-CPU pod, so 250m pods would otherwise take every CPU that frees up.
 The legacy `izi-x-linux*`, `izi-x-main-docker` and `izi-x-pr-docker` pools were uninstalled on
 2026-10-08: a branch still on the old labels rebases onto main.
+
+## Tier isolation
+
+PriorityClasses order only the Pending queue (`preemptionPolicy: Never`); a running optional PR job
+used to share CPU with a release build by requests and the disk equally. Now:
+
+- `scripts/ci-tier-weights.sh` (`ci-tier-weights.service`) puts every optional PR pod — pr-small,
+  pr-heavy, pr-k8s and their `-workflow` pods, and the PR buildkitd — into the idle tier on its pod
+  cgroup: `cpu.idle 1` (runs only on CPU no other pod wants) and `io.weight default 1` (others 100).
+  The kubelet sets a pod cgroup's resources only at creation, so the values hold.
+- `iocost.service` enables blk-iocost on `sda` at boot with `/etc/iocost.model`, the output of the
+  kernel's `tools/cgroup/iocost_coef_gen.py` run on this disk with no jobs running:
+  `python3 iocost_coef_gen.py --testfile-size-gb 16 > /etc/iocost.model`.
+- Optional PR pools request `CPU_REQUEST=10m`: their CPU is bounded by `cpu.idle`, not by the
+  scheduler, so a PR reservation can no longer keep a main/release pod Pending. pr-heavy `MAX=9`:
+  the job budget of 17.4 CPU over 1.83 cores per pr-heavy job (2026-10-08) — past that more pods
+  only wait. main-small / release-small request the average they use (0.06 / 0.03 cores; they
+  wait on buildkitd), rounded up to 50m.
+- CPU limits stay: Node, Go and Gradle size their worker pools from `cpu.max`.
 
 Required PR checks (validate api/crm, behind the merge gates) have their own pool,
 `izi-x-pr-required`, at `ci-pr-required`: ahead of every optional PR job (mobile checks, compat,
@@ -147,17 +166,14 @@ COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
 HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
-# izi-x-main-k8s runs only izi-x e2e: 11 Playwright workers with their browsers. At 6Gi the
-# memcg killed the suite twice on 2026-10-08 (16:03, 21:28 UTC: ~5.9 GB node + ~2.8 GB chrome).
-E2E="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=6Gi CPU_LIMIT=4 MEM_LIMIT=10Gi WORK_SIZE=8Gi"
-env $COMMON $SMALL NAME=izi-x-pr-small      MIN=1 MAX=16 CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=10m NAME=izi-x-pr-small MIN=1 MAX=16 CACHE_TIER=pr scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-pr-required   MIN=0 MAX=4  CACHE_TIER=pr PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-pr-heavy      MIN=0 MAX=4  CACHE_TIER=pr scripts/deploy-scale-set.sh
-env $COMMON $K8S   NAME=izi-x-pr-k8s        MIN=0 MAX=6  CACHE_TIER=pr scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-main-small    MIN=0 MAX=22 CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $HEAVY CPU_REQUEST=10m NAME=izi-x-pr-heavy MIN=0 MAX=9 CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $K8S   CPU_REQUEST=10m NAME=izi-x-pr-k8s MIN=0 MAX=6 CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=100m NAME=izi-x-main-small MIN=0 MAX=22 CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $E2E   NAME=izi-x-main-k8s      MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $SMALL NAME=izi-x-release-small MIN=0 MAX=17 CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=50m NAME=izi-x-release-small MIN=0 MAX=17 CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 

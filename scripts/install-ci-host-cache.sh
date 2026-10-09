@@ -35,7 +35,7 @@ for tier in pr trusted; do
   toolcache=$root/toolcache
   node_dir=$toolcache/node/$NODE_VERSION/x64
   flutter_dir=$toolcache/flutter/stable-$FLUTTER_VERSION-x64
-  install -d -o "$RUNNER_UID" -g "$RUNNER_UID"     "$root" "$toolcache" "$node_dir" "$flutter_dir"     "$root/cache" "$root/cache/npm" "$root/cache/pub" "$root/cache/dart-analysis-driver"     "$root/cache/vitest-crm" "$root/cache/jest-api" "$root/cache/build-runner" "$root/cache/node_modules"
+  install -d -o "$RUNNER_UID" -g "$RUNNER_UID"     "$root" "$toolcache" "$node_dir" "$flutter_dir"     "$root/cache" "$root/cache/npm" "$root/cache/pub" "$root/cache/dart-analysis-driver"     "$root/cache/vitest-crm" "$root/cache/jest-api" "$root/cache/build-runner" "$root/cache/node_modules"     "$root/cache/android-sdk" "$root/cache/gradle"
   install -d "/opt/ci-tier/$tier-containers" "/opt/ci-tier/$tier-containers/npm"     "/opt/ci-tier/$tier-containers/node_modules"
 
   if [ ! -f "$node_dir.complete" ]; then
@@ -46,6 +46,17 @@ for tier in pr trusted; do
     curl -fsSL "https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"       | tar -xJ -C "$flutter_dir"
   fi
   chown -R "$RUNNER_UID:$RUNNER_UID" "$toolcache"
+  # The Android build used to install its SDK and every Gradle dependency into an empty
+  # pod — 12.8 GB of disk writes per APK (bld1, 2026-10-08). The job installs into
+  # android-sdk under flock (izi-x build-mobile-widget.yml); Gradle shares its user home
+  # between concurrent builds through its own file locks. The user-home properties win
+  # over the project's: the JVM budget follows the heavy pod's 6 GiB limit, from the
+  # OOM of 2026-10-08 07:31 — AGP workers 0.9 + 0.6 + 0.15 GB, JVM native ~0.7, Flutter
+  # ~0.2 → 3.4 GB left for the daemon heap.
+  install -m 0644 -o "$RUNNER_UID" -g "$RUNNER_UID" /dev/stdin "$root/cache/gradle/gradle.properties" << 'PROPS'
+org.gradle.jvmargs=-Xmx3g -Dkotlin.daemon.jvm.options=-Xmx3g -Dkotlin.compiler.execution.strategy=in-process
+org.gradle.workers.max=4
+PROPS
   # Pull the engine artifacts once, as the user the jobs run as. flutter inspects the
   # working directory for a project, so run it from one the runner user can read.
   (cd /tmp && setpriv --reuid="$RUNNER_UID" --regid="$RUNNER_UID" --clear-groups     env HOME=/tmp PUB_CACHE="$root/cache/pub" "$flutter_dir/flutter/bin/flutter" precache)

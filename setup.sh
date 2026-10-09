@@ -176,8 +176,15 @@ curl -fsSL "$RAW/systemd/arc-prune.timer" -o /etc/systemd/system/arc-prune.timer
 # version; files nobody read for 14 days go.
 curl -fsSL "$RAW/systemd/ci-cache-prune.service" -o /etc/systemd/system/ci-cache-prune.service
 curl -fsSL "$RAW/systemd/ci-cache-prune.timer" -o /etc/systemd/system/ci-cache-prune.timer
+# Tier isolation: optional PR pods run in the idle CPU/IO tier (scripts/ci-tier-weights.sh);
+# iocost needs /etc/iocost.model, measured once on this disk (README, "Tier isolation").
+curl -fsSL "$RAW/scripts/ci-tier-weights.sh" -o /opt/build-server/ci-tier-weights.sh
+chmod +x /opt/build-server/ci-tier-weights.sh
+curl -fsSL "$RAW/systemd/ci-tier-weights.service" -o /etc/systemd/system/ci-tier-weights.service
+curl -fsSL "$RAW/systemd/iocost.service" -o /etc/systemd/system/iocost.service
 systemctl daemon-reload
 systemctl enable --now arc-watchdog.timer arc-runner-janitor.timer arc-prune.timer ci-cache-prune.timer
+systemctl enable --now iocost.service ci-tier-weights.service
 
 echo "=== CI host cache ==="
 # Tool cache and dependency caches the pools mount with CI_HOST_CACHE=true; a pool
