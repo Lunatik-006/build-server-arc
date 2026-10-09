@@ -93,33 +93,34 @@ image. arm64 runs through the host's binfmt (`qemu-user-static`, setup.sh).
 
 Requests follow sustained use (VictoriaMetrics `host="bld1"`, p90 of a pod's average): heavy
 1.6–2.2 CPU (peak p90 3.3, memory p90 4.4 GiB, max 6.0 at the limit); small ≤0.64 CPU / 0.62 GiB.
-Ceilings — below the table.
+Sizing — below the table.
 
 | scale set | tier | PriorityClass | runner req → lim | job pod req → lim | MAX |
 | --- | --- | --- | --- | --- | --- |
-| `izi-x-pr-small` | pr | — | 10m/512Mi → 2/1Gi | — | 16 |
-| `izi-x-pr-required` | pr | `ci-pr-required` | 2/4Gi → 4/6Gi | — | 4 |
-| `izi-x-pr-heavy` | pr | — | 10m/4Gi → 4/6Gi | — | 9 |
-| `izi-x-pr-k8s` | pr | — | 100m/256Mi → 1/1Gi | 10m/2Gi → 4/6Gi | 6 |
+| `izi-x-pr-small` | pr (idle) | — | 10m/512Mi → 2/1Gi | — | 48 |
+| `izi-x-pr-heavy` | pr (idle) | — | 10m/6Gi → 4/6Gi | — | 9 |
+| `izi-x-pr-k8s` | pr (idle) | — | 100m/256Mi → 1/1Gi | 10m/1.5Gi → 4/6Gi | 16 |
+| `izi-x-pr-required` | pr | `ci-pr-required` | 2/4.5Gi → 4/6Gi | — | 7 |
+| `izi-x-pr-required-small` | pr | `ci-pr-required` | 50m/512Mi → 2/1Gi | — | 6 |
 | `izi-x-main-small` | main | `ci-main` | 100m/512Mi → 2/1Gi | — | 22 |
-| `izi-x-main-heavy` | main | `ci-main` | 2/4Gi → 4/6Gi | — | 3 |
-| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/2Gi → 4/6Gi | 1 |
+| `izi-x-main-heavy` | main | `ci-main` | 2/6Gi → 4/6Gi | — | 5 |
+| `izi-x-main-k8s` | main | `ci-main` | 100m/256Mi → 1/1Gi | 1/6Gi → 4/6Gi | 1 |
 | `izi-x-release-small` | release | `ci-release` | 50m/512Mi → 2/1Gi | — | 17 |
-| `izi-x-release-large` | release | `ci-release` | 2/4Gi → 4/6Gi | — | 3 |
+| `izi-x-release-large` | release | `ci-release` | 2/6Gi → 4/6Gi | — | 3 |
 
-Ceilings, one formula. Budget = allocatable minus the non-job requests (listeners, buildkitd,
-registries, Miraj): 21.5 − 4.1 = 17.4 CPU on 2026-10-08. Demand of a pool = peak concurrency of
-its jobs over [created_at, created_at + run time] (GitHub jobs API, 5232 jobs, 30 h to
-2026-10-08), so queueing does not count as demand. Request-weighted, main+release peak at 13.0 CPU
-(p95 8.8), required PR checks at 26.0 (p95 18.0), all other PR jobs at 39.2 (p95 21.6); all
-together 60.7 (p50 18.2). Only main/release fit, so they get their peak: main-small 22, main-heavy 3,
-release-small 17, release-large 3. Required PR checks get what is
-left at the trusted p95: 17.4 − 8.8 ≈ 4 heavy pods. Everything else is queue by construction, and
-PriorityClasses order it; optional PR ceilings (small 16, heavy 4) only bound how much CPU a
-burst of optional jobs can hold when a required one frees up behind it — the scheduler keeps no
-room for a pending 2-CPU pod, so 250m pods would otherwise take every CPU that frees up.
-The legacy `izi-x-linux*`, `izi-x-main-docker` and `izi-x-pr-docker` pools were uninstalled on
-2026-10-08: a branch still on the old labels rebases onto main.
+Sizing, from 2026-10-08 (GitHub jobs API: queue and run times of every job; cAdvisor: CPU and
+memory per job; job budget = allocatable − non-job requests = 17.4 CPU, 50.3 GiB):
+
+- Memory request = p95 working set of the pool's jobs. Below it the kubelet evicts work under
+  pressure; above it memory sits reserved and unused. The scheduler then packs by real memory
+  and hands freed memory to the Pending queue in priority order.
+- CPU request = the mean cores a job of the pool uses; optional PR pools 10m (`cpu.idle`).
+- Priority pools: MAX = peak demand (queued + running). Their joint peak — 16.4 CPU of
+  requests, 31.6 GB of real memory — fits the budget, so they never wait on a ceiling.
+- Optional PR pools: MAX = min(17.4 CPU / mean cores per job, peak demand) — past CPU saturation
+  more pods only wait. pr-heavy min(9, 24), pr-k8s min(60, 16), pr-small min(96, 48).
+- meta and the validate gates (7–9 s) have `izi-x-pr-required-small`: in `izi-x-pr-required`
+  they held 309 of 478 slots of 2 CPU / 4 GiB that validate waited for.
 
 ## Tier isolation
 
@@ -168,17 +169,18 @@ crm, ~280 GB of ~1 TB in 7 h) were the disk's write ceiling. Service containers 
 # First: kubectl apply -f manifests/runner-priority-classes.yaml -f manifests/limitrange-arc-izi-x.yaml
 COMMON="APP_ID=3743839 INSTALL_ID=133105803 ORG=izi-x NAMESPACE=arc-izi-x IMAGE=ghcr.io/jakwuh/actions-runner:<sha> PRIVATE_KEY_FILE=<app>.pem DIND_EXTERNALS=false CI_HOST_CACHE=true"
 SMALL="DIND=false CPU_REQUEST=250m MEM_REQUEST=512Mi CPU_LIMIT=2 MEM_LIMIT=1Gi WORK_SIZE=4Gi"
-HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=4Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
+HEAVY="DIND=false CPU_REQUEST=2 MEM_REQUEST=6Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=16Gi"
 K8S="DIND=false CONTAINER_MODE=kubernetes-novolume CPU_REQUEST=1 MEM_REQUEST=2Gi CPU_LIMIT=4 MEM_LIMIT=6Gi WORK_SIZE=8Gi"
-env $COMMON $SMALL CPU_REQUEST=10m NAME=izi-x-pr-small MIN=1 MAX=16 CACHE_TIER=pr scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-pr-required   MIN=0 MAX=4  CACHE_TIER=pr PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
-env $COMMON $HEAVY CPU_REQUEST=10m NAME=izi-x-pr-heavy MIN=0 MAX=9 CACHE_TIER=pr scripts/deploy-scale-set.sh
-env $COMMON $K8S   CPU_REQUEST=10m NAME=izi-x-pr-k8s MIN=0 MAX=6 CACHE_TIER=pr scripts/deploy-scale-set.sh
-env $COMMON $SMALL CPU_REQUEST=100m NAME=izi-x-main-small MIN=0 MAX=22 CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-main-heavy    MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $K8S   NAME=izi-x-main-k8s      MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
-env $COMMON $SMALL CPU_REQUEST=50m NAME=izi-x-release-small MIN=0 MAX=17 CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
-env $COMMON $HEAVY NAME=izi-x-release-large MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=10m  NAME=izi-x-pr-small          MIN=1 MAX=48 CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $HEAVY CPU_REQUEST=10m  NAME=izi-x-pr-heavy          MIN=0 MAX=9  CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $K8S   CPU_REQUEST=10m MEM_REQUEST=1536Mi NAME=izi-x-pr-k8s MIN=0 MAX=16 CACHE_TIER=pr scripts/deploy-scale-set.sh
+env $COMMON $HEAVY MEM_REQUEST=4608Mi NAME=izi-x-pr-required     MIN=0 MAX=7  CACHE_TIER=pr PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=50m  NAME=izi-x-pr-required-small MIN=0 MAX=6  CACHE_TIER=pr PRIORITY_CLASS=ci-pr-required scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=100m NAME=izi-x-main-small        MIN=0 MAX=22 CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $HEAVY                  NAME=izi-x-main-heavy        MIN=0 MAX=5  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $K8S   MEM_REQUEST=6Gi  NAME=izi-x-main-k8s          MIN=0 MAX=1  CACHE_TIER=trusted PRIORITY_CLASS=ci-main scripts/deploy-scale-set.sh
+env $COMMON $SMALL CPU_REQUEST=50m  NAME=izi-x-release-small     MIN=0 MAX=17 CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
+env $COMMON $HEAVY                  NAME=izi-x-release-large     MIN=0 MAX=3  CACHE_TIER=trusted PRIORITY_CLASS=ci-release scripts/deploy-scale-set.sh
 ```
 
 To change only sizing on a live pool: `helm upgrade --reuse-values --set-json maxRunners=N
