@@ -48,15 +48,18 @@ for tier in pr trusted; do
   chown -R "$RUNNER_UID:$RUNNER_UID" "$toolcache"
   # The Android build used to install its SDK and every Gradle dependency into an empty
   # pod — 12.8 GB of disk writes per APK (bld1, 2026-10-08). The job installs into
-  # android-sdk under flock (izi-x build-mobile-widget.yml); Gradle shares its user home
-  # between concurrent builds through its own file locks. The user-home properties win
-  # over the project's. One JVM fits the heavy pod's 6 GiB: the Gradle daemon at -Xmx3g
-  # peaks at 3.9 GB RSS. The Kotlin plugin reads its execution strategy as a Gradle
-  # property only — passed as -D in jvmargs it is ignored and a KotlinCompileDaemon with
-  # its own -Xmx3g starts beside the Gradle daemon (OOM, bld1 2026-10-09 03:57).
+  # android-sdk under flock (izi-x build-mobile-widget.yml). Gradle releases its cache
+  # locks when another Gradle asks over localhost, and every pod has its own, so the
+  # job runs Gradle one at a time per tier under flock, and without a daemon that would
+  # keep the locks after its build. The user-home properties win over the project's.
+  # One JVM fits the heavy pod's 6 GiB: Gradle at -Xmx3g peaks at 3.9 GB RSS. The Kotlin
+  # plugin reads its execution strategy as a Gradle property only — passed as -D in
+  # jvmargs it is ignored and a KotlinCompileDaemon with its own -Xmx3g starts beside
+  # Gradle (OOM, bld1 2026-10-09 03:57).
   install -m 0644 -o "$RUNNER_UID" -g "$RUNNER_UID" /dev/stdin "$root/cache/gradle/gradle.properties" << 'PROPS'
 org.gradle.jvmargs=-Xmx3g
 org.gradle.workers.max=4
+org.gradle.daemon=false
 kotlin.compiler.execution.strategy=in-process
 PROPS
   # Pull the engine artifacts once, as the user the jobs run as. flutter inspects the
