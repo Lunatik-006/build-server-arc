@@ -12,6 +12,8 @@ const replacements = new Map([
   ['new Buffer(str)', 'Buffer.from(str)'],
   ['new Buffer(output)', 'Buffer.from(output)'],
   ['new Buffer(this.buffer)', 'Buffer.from(this.buffer)'],
+  ['new Buffer(line, chunkEncoding)', 'Buffer.from(line, chunkEncoding)'],
+  ["new Buffer(parsedSignature.params.signature, 'base64')", "Buffer.from(parsedSignature.params.signature, 'base64')"],
 ]);
 
 for (const file of process.argv.slice(2)) {
