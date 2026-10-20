@@ -176,6 +176,8 @@ curl -fsSL "$RAW/systemd/arc-prune.timer" -o /etc/systemd/system/arc-prune.timer
 # version; files nobody read for 14 days go.
 curl -fsSL "$RAW/systemd/ci-cache-prune.service" -o /etc/systemd/system/ci-cache-prune.service
 curl -fsSL "$RAW/systemd/ci-cache-prune.timer" -o /etc/systemd/system/ci-cache-prune.timer
+curl -fsSL "$RAW/scripts/ci-cache-prune-underlay.sh" -o /opt/build-server/ci-cache-prune-underlay.sh
+chmod +x /opt/build-server/ci-cache-prune-underlay.sh
 # Tier isolation: optional PR pods run in the idle CPU/IO tier (scripts/ci-tier-weights.sh);
 # iocost needs /etc/iocost.model, measured once on this disk (README, "Tier isolation").
 curl -fsSL "$RAW/scripts/ci-tier-weights.sh" -o /opt/build-server/ci-tier-weights.sh

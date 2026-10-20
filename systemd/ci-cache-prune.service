@@ -9,3 +9,4 @@ ExecStart=/usr/bin/find /opt/ci-tier -path '*/toolcache' -prune -o -path '*/node
 # A node_modules tree is one unit: the node-modules action touches it on every use,
 # so a tree (or a half-written .tmp of a killed job) untouched for 7 days goes whole.
 ExecStart=/usr/bin/find /opt/ci-tier -mindepth 3 -maxdepth 4 -path '*/node_modules/*' -prune -mtime +7 -exec rm -rf {} +
+ExecStart=/opt/build-server/ci-cache-prune-underlay.sh
