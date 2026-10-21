@@ -50,7 +50,7 @@ is the **jakwuh-build-server** App PEM; App id `3743839` for both.
 # NAMESPACE is mandatory here: the pool lives in arc-miraj, while the default
 # derived from the org would be arc-miraj-os. Deploy without it and you get a
 # second scale-set sharing the same GitHub registration instead of an upgrade.
-APP_ID=3743839 INSTALL_ID=133143010 ORG=Miraj-OS NAME=self-hosted MIN=0 MAX=8 \
+APP_ID=3743839 INSTALL_ID=133143010 ORG=Miraj-OS NAME=self-hosted MIN=0 MAX=1 \
   NAMESPACE=arc-miraj RELEASE=miraj-self-hosted \
   CPU_REQUEST=500m MEM_REQUEST=2Gi DIND_CPU_REQUEST=250m DIND_MEM_REQUEST=1Gi \
   REGISTRY_MIRRORS=http://10.43.104.17:5000 \
@@ -61,7 +61,8 @@ APP_ID=3743839 INSTALL_ID=133143010 ORG=Miraj-OS NAME=self-hosted MIN=0 MAX=8 \
 Miraj sizing was approved on 2026-10-03: keep the pool and shared BuildKit,
 scale idle runners to zero, and reserve 500m CPU for runner + 250m for DinD.
 Memory requests stay 2Gi + 1Gi, CPU limits 4 + 4, memory limits 6Gi + 4Gi,
-and maxRunners stays 8. A cold job may wait for a new runner; compare queue and
+and maxRunners is 1 to preserve IZI priority. Miraj uses `ci-background`, omits
+the unused externals copy, and its BuildKit runs one step on one CPU. A cold job may wait for a new runner; compare queue and
 execution time before treating the smaller reservation as an improvement.
 Rollback sizing: `MIN=1 CPU_REQUEST=1 DIND_CPU_REQUEST=1`, retaining every
 other value. For an existing release, save `helm get values` and upgrade the

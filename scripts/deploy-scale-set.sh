@@ -30,8 +30,15 @@ set -euo pipefail
 # that never closes, and the whole script dies at parse time.
 : "${PRIVATE_KEY_FILE:?PRIVATE_KEY_FILE required — path to the GitHub App PEM file}"
 IMAGE="${IMAGE:-ghcr.io/jakwuh/actions-runner:latest}"
-MAX="${MAX:-8}"
-MIN="${MIN:-1}"
+if [ "$ORG" = Miraj-OS ]; then
+  MAX="${MAX:-1}"
+  MIN="${MIN:-0}"
+  PRIORITY_CLASS="${PRIORITY_CLASS:-ci-background}"
+  DIND_EXTERNALS="${DIND_EXTERNALS:-false}"
+else
+  MAX="${MAX:-8}"
+  MIN="${MIN:-1}"
+fi
 # Per-container CPU/memory requests. These bound the scheduler so it never
 # overpacks the node — without them a container is "weightless" → CPU contention
 # → dind's managed containerd misses its 15s startup window → dind exits 1,

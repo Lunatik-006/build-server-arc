@@ -156,6 +156,11 @@ echo "=== Wait for controller ==="
 kubectl -n arc-systems rollout status deploy/arc-gha-rs-controller --timeout=120s
 
 echo "=== Janitors and watchdogs ==="
+for j in arc-prune ci-test-cache; do
+  curl -fsSL "$RAW/scripts/$j.sh" -o "/opt/build-server/$j.sh.new"
+  chmod +x "/opt/build-server/$j.sh.new"
+  mv -f "/opt/build-server/$j.sh.new" "/opt/build-server/$j.sh"
+done
 # arc-watchdog: a wedged controller, or a listener pointing at a deleted
 #   EphemeralRunnerSet, leaves every pool dead with zero red checks anywhere —
 #   jobs just queue.
@@ -196,6 +201,7 @@ chmod +x /opt/build-server/install-ci-host-cache.sh
 /opt/build-server/install-ci-host-cache.sh
 
 echo "=== In-cluster helpers ==="
+kubectl apply -f "$RAW/manifests/runner-priority-classes.yaml"
 # Pull-through registry cache (docker.io/ghcr rate limits + cold-pull latency)
 # and the shared buildkitd the miraj scale-set builds against. These used to be
 # applied by hand, which is why a rebuilt box came up subtly slower.
@@ -205,8 +211,6 @@ kubectl apply -f "$RAW/manifests/buildkitd-arc-miraj.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-arc-izi-x.yaml"
 kubectl apply -f "$RAW/manifests/buildkitd-trusted-arc-izi-x.yaml"
 kubectl apply -f "$RAW/manifests/limitrange-arc-izi-x.yaml"
-# Runner pod priorities — a pool deployed with PRIORITY_CLASS dies silently without them.
-kubectl apply -f "$RAW/manifests/runner-priority-classes.yaml"
 
 echo
 echo "ARC installed. Deploy scale-sets with: scripts/deploy-scale-set.sh"

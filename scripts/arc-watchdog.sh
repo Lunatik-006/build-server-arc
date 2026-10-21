@@ -83,6 +83,12 @@ heal_one() {
   local ns="$1" name="$2"
   local key="${ns}_${name}" strikes listener ers_ref pod_ok=0 ref_ok=1
 
+  if [ "$disk_pressure" = true ]; then
+    rm -f "$STATE/$key"
+    log "$ns/$name: node has DiskPressure; keeping controller alive while disk cleanup runs"
+    return 0
+  fi
+
   # An unreadable API is not an absent listener. When the node is starved the
   # apiserver times out, and answering that by restarting the controller is the
   # worst possible move: a fresh controller re-LISTs every pod, secret and
@@ -184,6 +190,12 @@ for i in d.get('items', []):
     notify "🛠 ARC self-heal: <b>$ns/$name</b> has no live listener; restarted arc-gha-rs-controller. Evidence in <code>$STATE/</code> on the build host — the restart does not always cure this, and repeats mean it did not."
   fi
   rm -f "$STATE/$key"
+}
+
+/opt/build-server/arc-prune.sh --if-needed || log 'could not schedule disk cleanup'
+disk_pressure=$($KC get nodes -o json | python3 -c 'import json,sys; print(str(any(c.get("type") == "DiskPressure" and c.get("status") == "True" for n in json.load(sys.stdin)["items"] for c in n["status"].get("conditions", []))).lower())') || {
+  log 'cannot read node pressure; skipping listener repairs'
+  exit 1
 }
 
 mapfile -t ARS < <($KC get autoscalingrunnerset -A \

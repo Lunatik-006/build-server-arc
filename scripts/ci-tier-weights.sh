@@ -32,18 +32,18 @@ idle_tier() {  # <pod name> <priorityClassName>
   return 1
 }
 
-declare -A done
+declare -A processed
 k3s kubectl -n "$NS" get pods --watch --output-watch-events \
   -o jsonpath='{.object.metadata.uid} {.object.metadata.name} {.object.spec.priorityClassName}{"\n"}' |
 while read -r uid name pc; do
-  [ -n "$uid" ] && [ -z "${done[$uid]:-}" ] || continue
-  idle_tier "$name" "${pc:-}" || { done[$uid]=skip; continue; }
+  [ -n "$uid" ] && [ -z "${processed[$uid]:-}" ] || continue
+  idle_tier "$name" "${pc:-}" || { processed[$uid]=skip; continue; }
   cg=$(ls -d /sys/fs/cgroup/kubepods.slice/kubepods-pod"${uid//-/_}".slice \
              /sys/fs/cgroup/kubepods.slice/kubepods-*.slice/kubepods-*-pod"${uid//-/_}".slice 2>/dev/null | head -1)
   # The cgroup appears when the pod is admitted; a later watch event of the same pod retries.
   [ -n "$cg" ] || continue
   if systemctl set-property --runtime "$(basename "$cg")" CPUWeight=idle IOWeight=1; then
-    done[$uid]=idle
+    processed[$uid]=idle
     log "idle tier: $name"
   else
     log "could not set idle tier on $name ($cg)"

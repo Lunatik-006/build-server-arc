@@ -35,8 +35,13 @@ for tier in pr trusted; do
   toolcache=$root/toolcache
   node_dir=$toolcache/node/$NODE_VERSION/x64
   flutter_dir=$toolcache/flutter/stable-$FLUTTER_VERSION-x64
-  install -d -o "$RUNNER_UID" -g "$RUNNER_UID"     "$root" "$toolcache" "$node_dir" "$flutter_dir"     "$root/cache" "$root/cache/npm" "$root/cache/pub" "$root/cache/dart-analysis-driver"     "$root/cache/vitest-crm" "$root/cache/jest-api" "$root/cache/build-runner" "$root/cache/node_modules"     "$root/cache/android-sdk" "$root/cache/gradle"
+  install -d -o "$RUNNER_UID" -g "$RUNNER_UID"     "$root" "$toolcache" "$node_dir" "$flutter_dir"     "$root/cache" "$root/cache/npm" "$root/cache/pub" "$root/cache/dart-analysis-driver"     "$root/cache/test-cache" "$root/cache/.tools" "$root/cache/build-runner" "$root/cache/node_modules"     "$root/cache/android-sdk" "$root/cache/gradle"
   install -d "/opt/ci-tier/$tier-containers" "/opt/ci-tier/$tier-containers/npm"     "/opt/ci-tier/$tier-containers/node_modules"
+  install -d "/opt/ci-tier/$tier-containers/test-cache" "/opt/ci-tier/$tier-containers/.tools"
+  for cache in "$root/cache" "/opt/ci-tier/$tier-containers"; do
+    install -m 0755 /opt/build-server/ci-test-cache.sh "$cache/.tools/ci-test-cache.new"
+    mv -f "$cache/.tools/ci-test-cache.new" "$cache/.tools/ci-test-cache"
+  done
 
   if [ ! -f "$node_dir.complete" ]; then
     curl -fsSL "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz"       | tar -xJ --strip-components=1 -C "$node_dir"
